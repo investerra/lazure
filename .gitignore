@@ -1,0 +1,26 @@
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+
+# Build artifacts
+/lazure
+/dist/
+
+# Local state (deploy history, etc.)
+/.lazure/
+
+# Decrypted SOPS sidecars — NEVER commit plaintext secrets
+envs/*.secrets.plain.yml
+**/*.secrets.plain.yml
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Agent session state
+.claude/
+.codex
