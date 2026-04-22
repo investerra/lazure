@@ -6,6 +6,7 @@ require (
 	github.com/Masterminds/sprig/v3 v3.3.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/log v1.0.0
+	github.com/pkg/errors v0.9.1
 	github.com/urfave/cli/v3 v3.8.0
 	sigs.k8s.io/yaml v1.6.0
 )

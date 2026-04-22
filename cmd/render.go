@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/investerra/lazure/internal/azurearm"
+	"github.com/investerra/lazure/internal/errs"
 	"github.com/investerra/lazure/internal/lazurecfg"
 )
 
@@ -28,7 +29,7 @@ import (
 func Render(ctx context.Context, c *cli.Command) error {
 	env := c.StringArg("env")
 	if env == "" {
-		return fmt.Errorf("render: env argument is required (e.g. 'lazure render dev')")
+		return errs.Usage(errs.New("render: env argument is required (e.g. 'lazure render dev')"))
 	}
 	dir := c.String("dir")
 
@@ -37,7 +38,7 @@ func Render(ctx context.Context, c *cli.Command) error {
 		Env:        env,
 	})
 	if err != nil {
-		return fmt.Errorf("render: loading manifest: %w", err)
+		return errs.Usage(errs.Wrap(err, "render: loading manifest"))
 	}
 
 	result := lazurecfg.Validate(manifest)
@@ -45,7 +46,7 @@ func Render(ctx context.Context, c *cli.Command) error {
 		slog.Warn(w)
 	}
 	if result.HasErrors() {
-		return fmt.Errorf("render: %w", result.Err())
+		return errs.Validation(errs.Wrap(result.Err(), "render"))
 	}
 
 	vaultURL, _ := vars["keyvault_url"].(string)
@@ -54,12 +55,12 @@ func Render(ctx context.Context, c *cli.Command) error {
 		VaultURL: vaultURL,
 	})
 	if err != nil {
-		return fmt.Errorf("render: transform: %w", err)
+		return errs.System(errs.Wrap(err, "render: transform"))
 	}
 
 	out, err := yaml.Marshal(arm)
 	if err != nil {
-		return fmt.Errorf("render: marshal: %w", err)
+		return errs.System(errs.Wrap(err, "render: marshal"))
 	}
 	fmt.Print(string(out))
 	return nil

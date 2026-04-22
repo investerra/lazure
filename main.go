@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,19 +9,27 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/investerra/lazure/cmd"
+	"github.com/investerra/lazure/internal/errs"
 	"github.com/investerra/lazure/internal/logging"
 )
 
 // Version is injected at build time via -ldflags "-X main.Version=...".
 var Version = "dev"
 
-var errNotImplemented = errors.New("not implemented yet")
+var errNotImplemented = errs.New("not implemented yet")
 
 func main() {
 	app := newApp()
-	if err := app.Run(context.Background(), os.Args); err != nil {
-		slog.Error(err.Error())
-		os.Exit(exitCodeFor(err))
+	ctx := context.Background()
+	if err := app.Run(ctx, os.Args); err != nil {
+		// --log-level=debug prints the full %+v stack trace chain that
+		// pkg/errors records; otherwise a one-line message.
+		if slog.Default().Enabled(ctx, slog.LevelDebug) {
+			slog.Error(fmt.Sprintf("%+v", err))
+		} else {
+			slog.Error(err.Error())
+		}
+		os.Exit(errs.Code(err))
 	}
 }
 
@@ -113,13 +120,6 @@ func envArg() []cli.Argument {
 
 func stub(name string) cli.ActionFunc {
 	return func(ctx context.Context, cmd *cli.Command) error {
-		return fmt.Errorf("%s: %w", name, errNotImplemented)
+		return errs.System(errs.Wrapf(errNotImplemented, "%s", name))
 	}
-}
-
-func exitCodeFor(err error) int {
-	if errors.Is(err, errNotImplemented) {
-		return 2
-	}
-	return 1
 }
