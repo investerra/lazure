@@ -10,6 +10,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/investerra/lazure/cmd"
+	"github.com/investerra/lazure/internal/logging"
 )
 
 // Version is injected at build time via -ldflags "-X main.Version=...".
@@ -54,7 +55,7 @@ func newApp() *cli.Command {
 			},
 		},
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
-			if err := setupLogging(cmd.String("log-level"), cmd.String("log-format")); err != nil {
+			if err := logging.Setup(cmd.String("log-level"), cmd.String("log-format")); err != nil {
 				return ctx, err
 			}
 			return ctx, nil
@@ -113,40 +114,6 @@ func envArg() []cli.Argument {
 func stub(name string) cli.ActionFunc {
 	return func(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("%s: %w", name, errNotImplemented)
-	}
-}
-
-func setupLogging(level, format string) error {
-	lvl, err := parseLogLevel(level)
-	if err != nil {
-		return err
-	}
-	opts := &slog.HandlerOptions{Level: lvl}
-	var h slog.Handler
-	switch format {
-	case "json":
-		h = slog.NewJSONHandler(os.Stderr, opts)
-	case "text", "":
-		h = slog.NewTextHandler(os.Stderr, opts)
-	default:
-		return fmt.Errorf("invalid log-format %q (want text|json)", format)
-	}
-	slog.SetDefault(slog.New(h))
-	return nil
-}
-
-func parseLogLevel(s string) (slog.Level, error) {
-	switch s {
-	case "debug":
-		return slog.LevelDebug, nil
-	case "info", "":
-		return slog.LevelInfo, nil
-	case "warn", "warning":
-		return slog.LevelWarn, nil
-	case "error":
-		return slog.LevelError, nil
-	default:
-		return 0, fmt.Errorf("invalid log-level %q (want debug|info|warn|error)", s)
 	}
 }
 
