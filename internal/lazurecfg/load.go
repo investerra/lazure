@@ -12,7 +12,7 @@ import (
 )
 
 // LoadOptions configures a full manifest load. ProjectDir is the directory
-// containing lazure.yml + envs/; Env is the positional environment argument
+// containing deploy.yml + envs/; Env is the positional environment argument
 // (e.g. "dev"); CLIVars holds --var overrides that win over vars.yml.
 type LoadOptions struct {
 	ProjectDir string
@@ -63,7 +63,7 @@ func LoadVars(opts LoadOptions) (map[string]any, error) {
 	return vars, nil
 }
 
-// LoadManifest renders lazure.yml with the full Vars set and unmarshals the
+// LoadManifest renders deploy.yml with the full Vars set and unmarshals the
 // result into a Manifest. Returns both the manifest and the Vars map used
 // to render it (handy for diagnostics).
 func LoadManifest(opts LoadOptions) (*Manifest, map[string]any, error) {
@@ -72,7 +72,7 @@ func LoadManifest(opts LoadOptions) (*Manifest, map[string]any, error) {
 		return nil, nil, err
 	}
 
-	manifestPath := filepath.Join(opts.ProjectDir, "lazure.yml")
+	manifestPath := filepath.Join(opts.ProjectDir, "deploy.yml")
 	rendered, err := renderTemplate(manifestPath, vars)
 	if err != nil {
 		return nil, nil, err
@@ -80,7 +80,7 @@ func LoadManifest(opts LoadOptions) (*Manifest, map[string]any, error) {
 
 	var m Manifest
 	if err := yaml.Unmarshal(rendered, &m); err != nil {
-		return nil, nil, fmt.Errorf("parse rendered lazure.yml: %w", err)
+		return nil, nil, fmt.Errorf("parse rendered deploy.yml: %w", err)
 	}
 	return &m, vars, nil
 }

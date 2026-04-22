@@ -8,6 +8,8 @@ import (
 	"os"
 
 	"github.com/urfave/cli/v3"
+
+	"github.com/investerra/lazure/cmd"
 )
 
 // Version is injected at build time via -ldflags "-X main.Version=...".
@@ -45,8 +47,8 @@ func newApp() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:     "dir",
-				Usage:    "project directory containing lazure.yml + envs/",
-				Value:    ".",
+				Usage:    "project directory containing deploy.yml + envs/ (default: ./deploy)",
+				Value:    "deploy",
 				Sources:  cli.EnvVars("LAZURE_DIR"),
 				Category: "Global",
 			},
@@ -60,7 +62,7 @@ func newApp() *cli.Command {
 		Commands: []*cli.Command{
 			// Deploy pipeline
 			{Name: "deploy", Usage: "deploy to an environment", Arguments: envArg(), Action: stub("deploy")},
-			{Name: "render", Usage: "print generated ARM YAML to stdout", Arguments: envArg(), Action: stub("render")},
+			{Name: "render", Usage: "print generated ARM YAML to stdout", Arguments: envArg(), Action: cmd.Render},
 			{Name: "diff", Usage: "diff rendered template vs deployed app", Arguments: envArg(), Action: stub("diff")},
 			{Name: "release", Usage: "cut a calver tag and push", Action: stub("release")},
 			{Name: "self-update", Usage: "update the lazure binary from GitHub releases", Action: stub("self-update")},

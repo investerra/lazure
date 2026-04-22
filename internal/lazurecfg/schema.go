@@ -1,11 +1,11 @@
 // Package lazurecfg holds the Lazure YAML schema — the types that users write
-// in lazure.yml, envs/{env}.vars.yml, and envs/{env}.secrets.yml.
+// in deploy.yml, envs/{env}.vars.yml, and envs/{env}.secrets.yml.
 //
 // The schema maps to Azure Container Apps ARM at transform time; see the
 // azurearm package for the output model.
 package lazurecfg
 
-// Manifest is the top-level shape of lazure.yml.
+// Manifest is the top-level shape of deploy.yml.
 type Manifest struct {
 	App            App                  `json:"app"`
 	Ingress        *Ingress             `json:"ingress,omitempty"`

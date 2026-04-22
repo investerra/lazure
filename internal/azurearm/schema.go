@@ -48,7 +48,7 @@ type ContainerAppProperties struct {
 }
 
 // Configuration groups app-level (non-replica) settings. Secrets here are
-// auto-populated from lazure.yml secret references via transform.go.
+// auto-populated from deploy.yml secret references via transform.go.
 type Configuration struct {
 	ActiveRevisionsMode string     `json:"activeRevisionsMode,omitempty"` // Single | Multiple
 	Ingress             *Ingress   `json:"ingress,omitempty"`

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// minimalManifest is a small-but-valid lazure.yml covering the major shapes
+// minimalManifest is a small-but-valid deploy.yml covering the major shapes
 // (app block, ingress, env with both value+secret, a single container) so
 // the end-to-end load path exercises more than the toy case.
 const minimalManifest = `
@@ -42,7 +42,7 @@ func setupLoadProject(t *testing.T, varsContent, manifestContent string) string 
 		}
 	}
 	if manifestContent != "" {
-		if err := os.WriteFile(filepath.Join(dir, "lazure.yml"), []byte(manifestContent), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "deploy.yml"), []byte(manifestContent), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
