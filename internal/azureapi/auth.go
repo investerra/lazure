@@ -6,6 +6,7 @@ package azureapi
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -84,8 +85,12 @@ func (p *TokenProvider) Token(ctx context.Context, scope string) (string, error)
 
 	if ct, ok := p.cache[scope]; ok {
 		if p.now().Before(ct.expiresOn.Add(-tokenRefreshBuffer)) {
+			slog.Debug("azureapi: token cache hit", "scope", scope)
 			return ct.token, nil
 		}
+		slog.Debug("azureapi: token expired, refetching", "scope", scope)
+	} else {
+		slog.Debug("azureapi: token cache miss, fetching", "scope", scope)
 	}
 
 	tok, err := p.cred.GetToken(ctx, policy.TokenRequestOptions{
@@ -95,6 +100,7 @@ func (p *TokenProvider) Token(ctx context.Context, scope string) (string, error)
 		return "", errs.Auth(errs.Wrapf(err, "azureapi: get token for %s", scope))
 	}
 
+	slog.Debug("azureapi: token fetched", "scope", scope, "expires_on", tok.ExpiresOn)
 	p.cache[scope] = cachedToken{
 		token:     tok.Token,
 		expiresOn: tok.ExpiresOn,

@@ -11,6 +11,7 @@ package verify
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/investerra/lazure/internal/errs"
@@ -74,6 +75,7 @@ func Secrets(ctx context.Context, manifest *lazurecfg.Manifest, sopsSecrets map[
 	for _, ref := range refs {
 		refSet[ref] = struct{}{}
 	}
+	slog.Debug("verify: collected refs", "refs", len(refs), "sops_keys", len(sopsSecrets))
 
 	// (1) Every reference must be in the SOPS file.
 	missingInSOPS := map[string]struct{}{}
@@ -83,21 +85,27 @@ func Secrets(ctx context.Context, manifest *lazurecfg.Manifest, sopsSecrets map[
 			missingInSOPS[ref] = struct{}{}
 		}
 	}
+	slog.Debug("verify: SOPS ref check done", "missing", len(missingInSOPS))
 
 	// (2) Every SOPS key should be referenced.
+	unused := 0
 	for name := range sopsSecrets {
 		if _, used := refSet[name]; !used {
 			r.addWarn("SOPS secret %q is not referenced anywhere in the manifest", name)
+			unused++
 		}
 	}
+	slog.Debug("verify: unused SOPS keys check done", "unused", unused)
 
 	// (3) Optional: each referenced secret must be in Key Vault.
 	if kv != nil {
+		toCheck := len(refs) - len(missingInSOPS)
+		slog.Debug("verify: checking refs against Key Vault", "count", toCheck)
 		for _, ref := range refs {
 			if _, missing := missingInSOPS[ref]; missing {
-				// Already errored; no need to double-report.
 				continue
 			}
+			slog.Debug("verify: kv check", "secret", ref)
 			exists, err := kv.SecretExists(ctx, ref)
 			if err != nil {
 				r.addError("secret %q: Key Vault check failed: %v", ref, err)
@@ -107,6 +115,7 @@ func Secrets(ctx context.Context, manifest *lazurecfg.Manifest, sopsSecrets map[
 				r.addError("secret %q referenced and present in SOPS but missing from Key Vault (run 'lazure secrets sync')", ref)
 			}
 		}
+		slog.Debug("verify: kv checks done")
 	}
 
 	return r

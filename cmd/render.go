@@ -32,7 +32,9 @@ func Render(ctx context.Context, c *cli.Command) error {
 		return errs.Usage(errs.New("render: env argument is required (e.g. 'lazure render dev')"))
 	}
 	dir := c.String("dir")
+	slog.Debug("render: start", "env", env, "dir", dir)
 
+	slog.Debug("render: loading manifest")
 	manifest, vars, err := lazurecfg.LoadManifest(lazurecfg.LoadOptions{
 		ProjectDir: dir,
 		Env:        env,
@@ -40,7 +42,12 @@ func Render(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		return errs.Usage(errs.Wrap(err, "render: loading manifest"))
 	}
+	slog.Debug("render: manifest loaded",
+		"app", manifest.App.Name,
+		"containers", len(manifest.Containers),
+		"init_containers", len(manifest.InitContainers))
 
+	slog.Debug("render: validating")
 	result := lazurecfg.Validate(manifest)
 	for _, w := range result.Warnings {
 		slog.Warn(w)
@@ -48,20 +55,23 @@ func Render(ctx context.Context, c *cli.Command) error {
 	if result.HasErrors() {
 		return errs.Validation(errs.Wrap(result.Err(), "render"))
 	}
+	slog.Debug("render: validation passed")
 
 	vaultURL, _ := vars["keyvault_url"].(string)
-
+	slog.Debug("render: transforming to ARM", "vault", vaultURL)
 	arm, err := azurearm.Transform(manifest, azurearm.TransformOptions{
 		VaultURL: vaultURL,
 	})
 	if err != nil {
 		return errs.System(errs.Wrap(err, "render: transform"))
 	}
+	slog.Debug("render: ARM assembled, marshaling YAML")
 
 	out, err := yaml.Marshal(arm)
 	if err != nil {
 		return errs.System(errs.Wrap(err, "render: marshal"))
 	}
 	fmt.Print(string(out))
+	slog.Debug("render: done", "bytes", len(out))
 	return nil
 }

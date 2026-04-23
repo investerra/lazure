@@ -3,6 +3,7 @@ package lazurecfg
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"text/template"
@@ -32,13 +33,19 @@ type LoadOptions struct {
 // vars.yml is rendered before they exist in scope — only standard vars are
 // available at that point.
 func LoadVars(opts LoadOptions) (map[string]any, error) {
+	slog.Debug("lazurecfg: loading standard vars", "env", opts.Env, "dir", opts.ProjectDir)
 	vars, err := StandardVars(opts.ProjectDir, opts.Env)
 	if err != nil {
 		return nil, err
 	}
+	slog.Debug("lazurecfg: standard vars ready",
+		"app_env", vars["app_env"],
+		"keyvault_url", vars["keyvault_url"],
+		"git_commit", vars["git_commit"])
 
 	varsPath := filepath.Join(opts.ProjectDir, "envs", opts.Env+".vars.yml")
 	if _, err := os.Stat(varsPath); err == nil {
+		slog.Debug("lazurecfg: rendering vars file", "path", varsPath)
 		rendered, err := renderTemplate(varsPath, vars)
 		if err != nil {
 			return nil, err
@@ -49,13 +56,19 @@ func LoadVars(opts LoadOptions) (map[string]any, error) {
 				return nil, fmt.Errorf("parse rendered %s: %w", varsPath, err)
 			}
 		}
+		slog.Debug("lazurecfg: user vars merged", "count", len(userVars))
 		for k, v := range userVars {
 			vars[k] = v
 		}
 	} else if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("stat %s: %w", varsPath, err)
+	} else {
+		slog.Debug("lazurecfg: no vars.yml found, using standard vars only", "path", varsPath)
 	}
 
+	if len(opts.CLIVars) > 0 {
+		slog.Debug("lazurecfg: applying CLI --var overrides", "count", len(opts.CLIVars))
+	}
 	for k, v := range opts.CLIVars {
 		vars[k] = v
 	}
@@ -73,15 +86,22 @@ func LoadManifest(opts LoadOptions) (*Manifest, map[string]any, error) {
 	}
 
 	manifestPath := filepath.Join(opts.ProjectDir, "deploy.yml")
+	slog.Debug("lazurecfg: rendering manifest", "path", manifestPath)
 	rendered, err := renderTemplate(manifestPath, vars)
 	if err != nil {
 		return nil, nil, err
 	}
+	slog.Debug("lazurecfg: manifest rendered", "bytes", len(rendered))
 
 	var m Manifest
 	if err := yaml.Unmarshal(rendered, &m); err != nil {
 		return nil, nil, fmt.Errorf("parse rendered deploy.yml: %w", err)
 	}
+	slog.Debug("lazurecfg: manifest parsed",
+		"app", m.App.Name,
+		"containers", len(m.Containers),
+		"init_containers", len(m.InitContainers),
+		"env_keys", len(m.Env))
 	return &m, vars, nil
 }
 

@@ -88,16 +88,7 @@ func newApp() *cli.Command {
 			{Name: "init", Usage: "scaffold a new lazure project in the current directory", Action: stub("init")},
 
 			// Config surface
-			{
-				Name:  "secrets",
-				Usage: "manage encrypted secrets",
-				Commands: []*cli.Command{
-					{Name: "view", Usage: "view secrets (redacted by default)", Arguments: envArg(), Action: stub("secrets view")},
-					{Name: "edit", Usage: "decrypt, edit, re-encrypt secrets", Arguments: envArg(), Action: stub("secrets edit")},
-					{Name: "verify", Usage: "verify secret references + optional KV existence", Arguments: envArg(), Action: stub("secrets verify")},
-					{Name: "sync", Usage: "sync secrets to Key Vault", Arguments: envArg(), Action: stub("secrets sync")},
-				},
-			},
+			cmd.SecretsCommand(),
 			{
 				Name:  "vars",
 				Usage: "manage plain-text variables",

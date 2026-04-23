@@ -3,6 +3,7 @@ package azureapi
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -54,6 +55,7 @@ func (c *KeyVaultClient) GetSecret(ctx context.Context, name string) (string, er
 	if err != nil {
 		return "", err
 	}
+	slog.Debug("keyvault: GET secret", "name", name)
 	var body struct {
 		Value string `json:"value"`
 	}
@@ -61,6 +63,7 @@ func (c *KeyVaultClient) GetSecret(ctx context.Context, name string) (string, er
 	if err != nil {
 		return "", errs.Wrapf(err, "keyvault: get secret %q", name)
 	}
+	slog.Debug("keyvault: GET secret response", "name", name, "status", resp.StatusCode)
 	if resp.StatusCode == http.StatusNotFound {
 		return "", ErrSecretNotFound
 	}
@@ -78,10 +81,12 @@ func (c *KeyVaultClient) PutSecret(ctx context.Context, name, value string) erro
 	if err != nil {
 		return err
 	}
+	slog.Debug("keyvault: PUT secret", "name", name, "value_bytes", len(value))
 	resp, err := r.SetBody(map[string]string{"value": value}).Put(c.base + "/secrets/" + name)
 	if err != nil {
 		return errs.Wrapf(err, "keyvault: put secret %q", name)
 	}
+	slog.Debug("keyvault: PUT secret response", "name", name, "status", resp.StatusCode)
 	if !resp.IsSuccessState() {
 		return errs.Errorf("keyvault: put secret %q: %s %s", name, resp.Status, resp.String())
 	}
@@ -97,10 +102,12 @@ func (c *KeyVaultClient) DeleteSecret(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
+	slog.Debug("keyvault: DELETE secret", "name", name)
 	resp, err := r.Delete(c.base + "/secrets/" + name)
 	if err != nil {
 		return errs.Wrapf(err, "keyvault: delete secret %q", name)
 	}
+	slog.Debug("keyvault: DELETE secret response", "name", name, "status", resp.StatusCode)
 	if resp.StatusCode == http.StatusNotFound {
 		return ErrSecretNotFound
 	}
@@ -117,6 +124,7 @@ func (c *KeyVaultClient) ListSecrets(ctx context.Context) ([]string, error) {
 	var out []string
 	url := c.base + "/secrets"
 	firstPage := true
+	slog.Debug("keyvault: LIST secrets")
 	for {
 		r, err := c.authedRequest(ctx)
 		if err != nil {
@@ -157,6 +165,7 @@ func (c *KeyVaultClient) ListSecrets(ctx context.Context) ([]string, error) {
 		url = page.NextLink
 		firstPage = false
 	}
+	slog.Debug("keyvault: LIST secrets done", "count", len(out))
 	return out, nil
 }
 

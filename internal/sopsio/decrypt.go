@@ -20,11 +20,18 @@ import (
 // credentials via the same DefaultAzureCredential chain lazure uses
 // elsewhere: env vars → managed identity → az CLI → VS Code.
 func Decrypt(path string) (map[string]string, error) {
+	slog.Debug("sopsio: decrypting file", "path", path)
 	plain, err := decrypt.File(path, "yaml")
 	if err != nil {
 		return nil, errs.Wrapf(err, "sopsio: decrypt %s", path)
 	}
-	return parseDecryptedYAML(plain)
+	slog.Debug("sopsio: decrypted, parsing YAML", "bytes", len(plain))
+	out, err := parseDecryptedYAML(plain)
+	if err != nil {
+		return nil, err
+	}
+	slog.Debug("sopsio: decryption complete", "path", path, "secret_count", len(out))
+	return out, nil
 }
 
 // parseDecryptedYAML converts decrypted SOPS YAML bytes into a string map,
