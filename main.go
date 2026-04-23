@@ -101,15 +101,7 @@ func newApp() *cli.Command {
 
 			// Config surface
 			cmd.SecretsCommand(),
-			{
-				Name:  "vars",
-				Usage: "manage plain-text variables",
-				Commands: []*cli.Command{
-					{Name: "view", Usage: "view effective vars", Arguments: envArg(), Action: stub("vars view")},
-					{Name: "edit", Usage: "open vars.yml in $EDITOR", Arguments: envArg(), Action: stub("vars edit")},
-					{Name: "verify", Usage: "verify vars render and are non-empty", Arguments: envArg(), Action: stub("vars verify")},
-				},
-			},
+			cmd.VarsCommand(),
 		},
 		EnableShellCompletion: true,
 	}
