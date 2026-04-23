@@ -11,7 +11,9 @@ require (
 	github.com/getsops/sops/v3 v3.12.2
 	github.com/imroc/req/v3 v3.57.0
 	github.com/pkg/errors v0.9.1
+	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2
 	github.com/urfave/cli/v3 v3.8.0
+	golang.org/x/sync v0.19.0
 	sigs.k8s.io/yaml v1.6.0
 )
 
@@ -152,7 +154,6 @@ require (
 	golang.org/x/exp v0.0.0-20231006140011-7918f672742d // indirect
 	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/term v0.40.0 // indirect
 	golang.org/x/text v0.34.0 // indirect

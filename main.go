@@ -77,7 +77,13 @@ func newApp() *cli.Command {
 				Action:    cmd.Deploy,
 			},
 			{Name: "render", Usage: "print generated ARM YAML to stdout", Arguments: envArg(), Action: cmd.Render},
-			{Name: "diff", Usage: "diff rendered template vs deployed app", Arguments: envArg(), Action: stub("diff")},
+			{
+				Name:      "diff",
+				Usage:     "diff rendered template vs deployed app",
+				Arguments: envArg(),
+				Flags:     cmd.DiffFlags(),
+				Action:    cmd.Diff,
+			},
 			{Name: "release", Usage: "cut a calver tag and push", Action: stub("release")},
 			{Name: "self-update", Usage: "update the lazure binary from GitHub releases", Action: stub("self-update")},
 
