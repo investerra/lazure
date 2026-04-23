@@ -96,10 +96,14 @@ func TestStreamLogs_ReadsLines(t *testing.T) {
 	}
 }
 
-func TestStreamLogs_NonFollowNoQueryParams(t *testing.T) {
+// TestStreamLogs_NonFollowSendsFollowFalse — Azure's log stream
+// endpoint defaults to follow=true when the query param is absent, so
+// we MUST send follow=false explicitly to terminate after the tail.
+// Omitting it would hang the scanner until ctx cancel.
+func TestStreamLogs_NonFollowSendsFollowFalse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("follow") != "" {
-			t.Errorf("follow should not be set when opts.Follow=false")
+		if got := r.URL.Query().Get("follow"); got != "false" {
+			t.Errorf("follow = %q, want %q (must be explicit)", got, "false")
 		}
 		if r.URL.Query().Get("tailLines") != "" {
 			t.Errorf("tailLines should not be set when opts.Tail=0")

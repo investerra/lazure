@@ -95,7 +95,13 @@ func newApp() *cli.Command {
 				Flags:     cmd.StatusFlags(),
 				Action:    cmd.Status,
 			},
-			{Name: "logs", Usage: "stream container logs", Arguments: envArg(), Action: stub("logs")},
+			{
+				Name:      "logs",
+				Usage:     "stream container logs",
+				Arguments: envArg(),
+				Flags:     cmd.LogsFlags(),
+				Action:    cmd.Logs,
+			},
 			{
 				Name:      "revisions",
 				Usage:     "list recent revisions",

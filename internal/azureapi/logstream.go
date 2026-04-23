@@ -76,8 +76,13 @@ func StreamLogs(ctx context.Context, endpoint, token string, opts LogStreamOptio
 		return errs.Wrapf(err, "logstream: parse endpoint %q", endpoint)
 	}
 	q := u.Query()
+	// `follow` must be sent explicitly on every request — Azure's log
+	// stream endpoint defaults to follow=true when the param is absent,
+	// which would hang a non-follow call forever.
 	if opts.Follow {
 		q.Set("follow", "true")
+	} else {
+		q.Set("follow", "false")
 	}
 	if opts.Tail > 0 {
 		q.Set("tailLines", strconv.Itoa(opts.Tail))
