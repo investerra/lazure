@@ -35,6 +35,9 @@ func Normalize(app *azurearm.ContainerApp) {
 	app.Properties.ProvisioningState = ""
 
 	cfg := &app.Properties.Configuration
+	if cfg.Ingress != nil {
+		cfg.Ingress.FQDN = "" // server-assigned, zero for diff
+	}
 	sort.Slice(cfg.Secrets, func(i, j int) bool {
 		return cfg.Secrets[i].Name < cfg.Secrets[j].Name
 	})

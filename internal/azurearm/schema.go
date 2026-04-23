@@ -70,6 +70,10 @@ type Ingress struct {
 	CorsPolicy             *CorsPolicy             `json:"corsPolicy,omitempty"`
 	IPSecurityRestrictions []IPSecurityRestriction `json:"ipSecurityRestrictions,omitempty"`
 	Traffic                []TrafficEntry          `json:"traffic,omitempty"`
+
+	// FQDN is read-only on GET — Azure publishes the assigned hostname
+	// once the app has ingress. omitempty so we never write it on PUT.
+	FQDN string `json:"fqdn,omitempty"`
 }
 
 type CorsPolicy struct {

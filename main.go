@@ -88,7 +88,13 @@ func newApp() *cli.Command {
 			{Name: "self-update", Usage: "update the lazure binary from GitHub releases", Action: stub("self-update")},
 
 			// Ops / day-two
-			{Name: "status", Usage: "show current state of the deployed app", Arguments: envArg(), Action: stub("status")},
+			{
+				Name:      "status",
+				Usage:     "show current state of the deployed app",
+				Arguments: envArg(),
+				Flags:     cmd.StatusFlags(),
+				Action:    cmd.Status,
+			},
 			{Name: "logs", Usage: "stream container logs", Arguments: envArg(), Action: stub("logs")},
 			{Name: "revisions", Usage: "list recent revisions", Arguments: envArg(), Action: stub("revisions")},
 			{Name: "rollback", Usage: "shift traffic to a previous revision", Arguments: envArg(), Action: stub("rollback")},
