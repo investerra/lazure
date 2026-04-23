@@ -40,11 +40,19 @@ type ReplicaProperties struct {
 // ReplicaContainer is the per-container state inside a replica —
 // lets us answer "is the tasks container running?" independently of
 // the app container.
+//
+// LogStreamEndpoint is an https:// URL returned by ARM GET; hitting it
+// with a bearer token from getAuthToken streams that container's
+// stdout/stderr as chunked HTTP. ExecEndpoint is a similar URL but
+// switched to wss:// for interactive exec sessions (see az containerapp
+// exec). Both are read-only and populated by Azure on GET.
 type ReplicaContainer struct {
-	Name         string `json:"name"`
-	ContainerID  string `json:"containerId,omitempty"`
-	Ready        bool   `json:"ready,omitempty"`
-	Started      bool   `json:"started,omitempty"`
-	RestartCount int    `json:"restartCount,omitempty"`
-	RunningState string `json:"runningState,omitempty"`
+	Name              string `json:"name"`
+	ContainerID       string `json:"containerId,omitempty"`
+	Ready             bool   `json:"ready,omitempty"`
+	Started           bool   `json:"started,omitempty"`
+	RestartCount      int    `json:"restartCount,omitempty"`
+	RunningState      string `json:"runningState,omitempty"`
+	LogStreamEndpoint string `json:"logStreamEndpoint,omitempty"`
+	ExecEndpoint      string `json:"execEndpoint,omitempty"`
 }
