@@ -117,11 +117,11 @@ func buildRegistries(m *lazurecfg.Manifest) []Registry {
 // ---------- secrets (auto-generated from references) ----------
 
 // buildSecrets walks the entire manifest collecting every distinct secret
-// name referenced by env / merge_env / registries.password_secret /
-// scale.rules[].auth.secrets, then emits one ARM Secret per name bound to
-// the Key Vault URL with app.identity for auth.
+// reference and emits one ARM Secret per name bound to the Key Vault URL
+// with app.identity for auth. Uses lazurecfg.CollectSecretRefs so the
+// verify package and transform agree on what counts as a "reference."
 func buildSecrets(m *lazurecfg.Manifest, vaultURL string) []Secret {
-	names := collectSecretRefs(m)
+	names := lazurecfg.CollectSecretRefs(m)
 	if len(names) == 0 {
 		return nil
 	}
@@ -135,55 +135,6 @@ func buildSecrets(m *lazurecfg.Manifest, vaultURL string) []Secret {
 		})
 	}
 	return out
-}
-
-func collectSecretRefs(m *lazurecfg.Manifest) []string {
-	seen := map[string]struct{}{}
-	add := func(name string) {
-		if name != "" {
-			seen[name] = struct{}{}
-		}
-	}
-
-	addFromEnv := func(env map[string]*lazurecfg.EnvValue) {
-		for _, v := range env {
-			if v != nil && v.IsSecret() {
-				add(v.SecretRef)
-			}
-		}
-	}
-
-	addFromEnv(m.Env)
-	for _, c := range m.Containers {
-		addFromEnv(c.Env)
-		addFromEnv(c.MergeEnv)
-	}
-	for _, c := range m.InitContainers {
-		addFromEnv(c.Env)
-		addFromEnv(c.MergeEnv)
-	}
-
-	for _, r := range m.Registries {
-		add(r.PasswordSecret)
-	}
-
-	if m.Scale != nil {
-		for _, rule := range m.Scale.Rules {
-			if rule.Auth == nil {
-				continue
-			}
-			for _, s := range rule.Auth.Secrets {
-				add(s.Secret)
-			}
-		}
-	}
-
-	names := make([]string, 0, len(seen))
-	for n := range seen {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
 }
 
 // ---------- ingress ----------
