@@ -136,3 +136,56 @@ func TestErrorf_StackAttached(t *testing.T) {
 		t.Errorf("Errorf should attach a stack; got:\n%s", plusV)
 	}
 }
+
+// ---------- Silent / IsSilent ----------
+
+func TestSilent_CarriesCode(t *testing.T) {
+	err := Silent(42, errors.New("child exited"))
+	if got := Code(err); got != 42 {
+		t.Errorf("Code = %d, want 42", got)
+	}
+	if !IsSilent(err) {
+		t.Error("IsSilent should be true for Silent-tagged error")
+	}
+}
+
+func TestSilent_NilStaysNil(t *testing.T) {
+	if err := Silent(5, nil); err != nil {
+		t.Errorf("Silent(5, nil) = %v, want nil", err)
+	}
+}
+
+func TestSilent_ThroughWrapChain(t *testing.T) {
+	// Even buried inside Wrap layers, IsSilent still detects the flag
+	// via errors.As — so callers can freely add context above a Silent.
+	base := Silent(7, errors.New("az failed"))
+	outer := Wrap(base, "running exec")
+	if !IsSilent(outer) {
+		t.Error("IsSilent should walk the wrap chain")
+	}
+	if got := Code(outer); got != 7 {
+		t.Errorf("Code = %d, want 7", got)
+	}
+}
+
+func TestIsSilent_NonSilentTaggedError(t *testing.T) {
+	// A regular Validation/System/Auth error must NOT be silent.
+	for _, wrap := range []func(error) error{Validation, System, Auth, Usage, Drift} {
+		err := wrap(errors.New("x"))
+		if IsSilent(err) {
+			t.Errorf("IsSilent should be false for non-Silent tag: %v", err)
+		}
+	}
+}
+
+func TestIsSilent_NilFalse(t *testing.T) {
+	if IsSilent(nil) {
+		t.Error("IsSilent(nil) should be false")
+	}
+}
+
+func TestIsSilent_PlainErrorFalse(t *testing.T) {
+	if IsSilent(errors.New("plain")) {
+		t.Error("IsSilent(plain) should be false")
+	}
+}

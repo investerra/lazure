@@ -22,12 +22,17 @@ func main() {
 	app := newApp()
 	ctx := context.Background()
 	if err := app.Run(ctx, os.Args); err != nil {
-		// --log-level=debug prints the full %+v stack trace chain that
-		// pkg/errors records; otherwise a one-line message.
-		if slog.Default().Enabled(ctx, slog.LevelDebug) {
-			slog.Error(fmt.Sprintf("%+v", err))
-		} else {
-			slog.Error(err.Error())
+		// Silent errors come from subprocess wrappers where the child
+		// already wrote its own diagnostics to inherited stderr; adding
+		// a lazure-prefixed line on top would be noise.
+		if !errs.IsSilent(err) {
+			// --log-level=debug prints the full %+v stack trace chain
+			// that pkg/errors records; otherwise a one-line message.
+			if slog.Default().Enabled(ctx, slog.LevelDebug) {
+				slog.Error(fmt.Sprintf("%+v", err))
+			} else {
+				slog.Error(err.Error())
+			}
 		}
 		os.Exit(errs.Code(err))
 	}
@@ -128,7 +133,13 @@ func newApp() *cli.Command {
 				Flags:     cmd.RestartFlags(),
 				Action:    cmd.Restart,
 			},
-			{Name: "exec", Usage: "exec into a container (shells out to az)", Arguments: envArg(), Action: stub("exec")},
+			{
+				Name:      "exec",
+				Usage:     "exec into a container (shells out to az)",
+				Arguments: cmd.ExecArgs(),
+				Flags:     cmd.ExecFlags(),
+				Action:    cmd.Exec,
+			},
 			{Name: "doctor", Usage: "preflight diagnostic checks", Action: stub("doctor")},
 
 			// Onboarding

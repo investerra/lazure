@@ -36,14 +36,19 @@ const (
 
 // coded carries an exit code alongside a wrapped error. Format delegates
 // to the wrapped error so %+v still surfaces pkg/errors stack traces.
+// The silent flag tells main.go to skip printing err.Error() — used by
+// subprocess wrappers where the child already wrote its own diagnostics
+// to inherited stderr and any additional message would be noise.
 type coded struct {
-	code int
-	err  error
+	code   int
+	err    error
+	silent bool
 }
 
 func (c *coded) Error() string { return c.err.Error() }
 func (c *coded) Unwrap() error { return c.err }
 func (c *coded) Code() int     { return c.code }
+func (c *coded) Silent() bool  { return c.silent }
 
 func (c *coded) Format(s fmt.State, verb rune) {
 	if f, ok := c.err.(fmt.Formatter); ok {
@@ -57,6 +62,13 @@ func (c *coded) Format(s fmt.State, verb rune) {
 // the chain that satisfies it provides an exit-code hint.
 type coder interface {
 	Code() int
+}
+
+// silencer is the marker interface checked by IsSilent. When present,
+// main.go knows the subprocess already wrote any diagnostics the user
+// needs, and should exit the indicated code without printing anything.
+type silencer interface {
+	Silent() bool
 }
 
 // WithCode tags err with a specific exit code.
@@ -87,6 +99,33 @@ func Usage(err error) error { return WithCode(CodeSystem, err) }
 // System tags err as a generic operator-fixable system error (exit 2):
 // git not available, $EDITOR not set, invalid log-level, etc.
 func System(err error) error { return WithCode(CodeSystem, err) }
+
+// Silent tags err with a specific exit code AND flags it so main.go
+// skips printing err.Error(). Intended for subprocess wrappers (exec
+// → az, release --wait → gh) where the child has already emitted its
+// own stderr via inherited file descriptors and any additional
+// lazure-prefixed line would be noise. The code is usually the child's
+// exit status.
+func Silent(code int, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &coded{code: code, err: err, silent: true}
+}
+
+// IsSilent reports whether err (or anything in its unwrap chain) was
+// tagged by Silent. main.go uses this to decide whether to log the
+// error message before calling os.Exit.
+func IsSilent(err error) bool {
+	if err == nil {
+		return false
+	}
+	var s silencer
+	if errors.As(err, &s) {
+		return s.Silent()
+	}
+	return false
+}
 
 // Code extracts the exit code for an error chain. Returns 0 for nil,
 // the tagged code for a coded error (via errors.As, so it works through
