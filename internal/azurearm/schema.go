@@ -45,6 +45,12 @@ type ContainerAppProperties struct {
 	ManagedEnvironmentID string        `json:"managedEnvironmentId"`
 	Configuration        Configuration `json:"configuration"`
 	Template             Template      `json:"template"`
+
+	// Read-only fields populated by GET responses. omitempty means we
+	// never accidentally write them back in a PUT body — lazure-managed
+	// state lives elsewhere in the struct.
+	LatestRevisionName string `json:"latestRevisionName,omitempty"`
+	ProvisioningState  string `json:"provisioningState,omitempty"`
 }
 
 // Configuration groups app-level (non-replica) settings. Secrets here are

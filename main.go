@@ -69,7 +69,13 @@ func newApp() *cli.Command {
 		},
 		Commands: []*cli.Command{
 			// Deploy pipeline
-			{Name: "deploy", Usage: "deploy to an environment", Arguments: envArg(), Action: stub("deploy")},
+			{
+				Name:      "deploy",
+				Usage:     "deploy to an environment",
+				Arguments: envArg(),
+				Flags:     cmd.DeployFlags(),
+				Action:    cmd.Deploy,
+			},
 			{Name: "render", Usage: "print generated ARM YAML to stdout", Arguments: envArg(), Action: cmd.Render},
 			{Name: "diff", Usage: "diff rendered template vs deployed app", Arguments: envArg(), Action: stub("diff")},
 			{Name: "release", Usage: "cut a calver tag and push", Action: stub("release")},
