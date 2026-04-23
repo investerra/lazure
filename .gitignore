@@ -24,3 +24,4 @@ envs/*.secrets.plain.yml
 # Agent session state
 .claude/
 .codex
+/var/

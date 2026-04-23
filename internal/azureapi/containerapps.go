@@ -102,12 +102,52 @@ func (c *ContainerAppsClient) PutAndWait(ctx context.Context, sub, rg, name stri
 		return nil, errs.Wrapf(err, "containerapps: PUT %s/%s", rg, name)
 	}
 	slog.Debug("containerapps: PUT response", "status", resp.StatusCode)
+	return c.waitForCompletion(ctx, sub, rg, name, resp, "PUT")
+}
 
+// PatchTrafficAndWait updates just the traffic distribution on an
+// existing container app. Reuses PutAndWait's sync/async handling.
+// activeMode should be "Single" or "Multiple" — callers (cmd/rollback)
+// pick based on the traffic shape.
+func (c *ContainerAppsClient) PatchTrafficAndWait(ctx context.Context, sub, rg, name string, traffic []azurearm.TrafficEntry, activeMode string) (*azurearm.ContainerApp, error) {
+	r, err := c.armRequest(ctx)
+	if err != nil {
+		return nil, err
+	}
+	url := c.base + containerAppPath(sub, rg, name)
+
+	// Construct a minimal PATCH body carrying only the fields we want
+	// to change. ARM's PATCH semantics merge this into the existing
+	// resource, so everything else (containers, scale, etc.) stays as is.
+	body := map[string]any{
+		"properties": map[string]any{
+			"configuration": map[string]any{
+				"activeRevisionsMode": activeMode,
+				"ingress": map[string]any{
+					"traffic": traffic,
+				},
+			},
+		},
+	}
+	slog.Debug("containerapps: PATCH traffic", "url", url, "mode", activeMode, "entries", len(traffic))
+	resp, err := r.SetBody(body).Patch(url)
+	if err != nil {
+		return nil, errs.Wrapf(err, "containerapps: PATCH %s/%s", rg, name)
+	}
+	slog.Debug("containerapps: PATCH response", "status", resp.StatusCode)
+	return c.waitForCompletion(ctx, sub, rg, name, resp, "PATCH")
+}
+
+// waitForCompletion handles the sync-or-async response dance shared by
+// PUT and PATCH. On sync (200/201), decodes the body and returns. On
+// async (202), polls Azure-AsyncOperation until Succeeded then fetches
+// the final state via Get.
+func (c *ContainerAppsClient) waitForCompletion(ctx context.Context, sub, rg, name string, resp *req.Response, verb string) (*azurearm.ContainerApp, error) {
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusCreated:
 		var app azurearm.ContainerApp
 		if err := json.Unmarshal(resp.Bytes(), &app); err != nil {
-			return nil, errs.Wrap(err, "containerapps: parse sync PUT response")
+			return nil, errs.Wrapf(err, "containerapps: parse sync %s response", verb)
 		}
 		return &app, nil
 
@@ -117,19 +157,113 @@ func (c *ContainerAppsClient) PutAndWait(ctx context.Context, sub, rg, name stri
 			opURL = resp.Header.Get("Location")
 		}
 		if opURL == "" {
-			return nil, errs.New("containerapps: PUT returned 202 but no Azure-AsyncOperation or Location header")
+			return nil, errs.Errorf("containerapps: %s returned 202 but no Azure-AsyncOperation or Location header", verb)
 		}
-		slog.Debug("containerapps: polling async op", "url", opURL)
+		slog.Debug("containerapps: polling async op", "url", opURL, "verb", verb)
 		if err := c.pollAsyncOp(ctx, opURL); err != nil {
 			return nil, err
 		}
-		// Success — fetch final state so caller has latestRevisionName etc.
 		return c.Get(ctx, sub, rg, name)
 
 	default:
-		return nil, errs.Errorf("containerapps: PUT %s/%s: %s %s",
-			rg, name, resp.Status, resp.String())
+		return nil, errs.Errorf("containerapps: %s %s/%s: %s %s",
+			verb, rg, name, resp.Status, resp.String())
 	}
+}
+
+// ListRevisions returns the revisions of a container app. Azure's
+// default ordering is newest-first.
+func (c *ContainerAppsClient) ListRevisions(ctx context.Context, sub, rg, name string) ([]azurearm.Revision, error) {
+	url := c.base + containerAppPath(sub, rg, name) + "/revisions"
+	slog.Debug("containerapps: LIST revisions", "url", url)
+
+	var out []azurearm.Revision
+	firstPage := true
+	for {
+		r, err := c.armRequest(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !firstPage {
+			// Azure's nextLink already embeds api-version; clearing the
+			// query map avoids double-append.
+			r.QueryParams = nil
+		}
+		var page struct {
+			Value    []azurearm.Revision `json:"value"`
+			NextLink string              `json:"nextLink"`
+		}
+		resp, err := r.SetSuccessResult(&page).Get(url)
+		if err != nil {
+			return nil, errs.Wrapf(err, "containerapps: list revisions %s/%s", rg, name)
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, ErrContainerAppNotFound
+		}
+		if !resp.IsSuccessState() {
+			return nil, errs.Errorf("containerapps: list revisions %s/%s: %s", rg, name, resp.Status)
+		}
+		out = append(out, page.Value...)
+		if page.NextLink == "" {
+			break
+		}
+		url = page.NextLink
+		firstPage = false
+	}
+	slog.Debug("containerapps: list revisions done", "count", len(out))
+	return out, nil
+}
+
+// ListReplicas returns the running replicas of a specific revision.
+func (c *ContainerAppsClient) ListReplicas(ctx context.Context, sub, rg, name, revision string) ([]azurearm.Replica, error) {
+	r, err := c.armRequest(ctx)
+	if err != nil {
+		return nil, err
+	}
+	url := c.base + containerAppPath(sub, rg, name) + "/revisions/" + revision + "/replicas"
+	slog.Debug("containerapps: LIST replicas", "url", url)
+
+	var body struct {
+		Value []azurearm.Replica `json:"value"`
+	}
+	resp, err := r.SetSuccessResult(&body).Get(url)
+	if err != nil {
+		return nil, errs.Wrapf(err, "containerapps: list replicas %s/%s/%s", rg, name, revision)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrContainerAppNotFound
+	}
+	if !resp.IsSuccessState() {
+		return nil, errs.Errorf("containerapps: list replicas: %s", resp.Status)
+	}
+	slog.Debug("containerapps: list replicas done", "count", len(body.Value))
+	return body.Value, nil
+}
+
+// RestartRevision triggers a restart of a specific revision. Fire-and-
+// forget — Azure responds 202 and the restart proceeds asynchronously.
+// We don't poll because there's no user-visible "restart completed"
+// signal; the new pod spins up under the same revision.
+func (c *ContainerAppsClient) RestartRevision(ctx context.Context, sub, rg, name, revision string) error {
+	r, err := c.armRequest(ctx)
+	if err != nil {
+		return err
+	}
+	url := c.base + containerAppPath(sub, rg, name) + "/revisions/" + revision + "/restart"
+	slog.Debug("containerapps: POST restart", "url", url)
+
+	resp, err := r.Post(url)
+	if err != nil {
+		return errs.Wrapf(err, "containerapps: restart %s", revision)
+	}
+	slog.Debug("containerapps: restart response", "status", resp.StatusCode)
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrContainerAppNotFound
+	}
+	if !resp.IsSuccessState() {
+		return errs.Errorf("containerapps: restart %s: %s %s", revision, resp.Status, resp.String())
+	}
+	return nil
 }
 
 // pollAsyncOp polls an Azure-AsyncOperation URL until it reaches a
