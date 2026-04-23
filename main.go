@@ -84,7 +84,12 @@ func newApp() *cli.Command {
 				Flags:     cmd.DiffFlags(),
 				Action:    cmd.Diff,
 			},
-			{Name: "release", Usage: "cut a calver tag and push", Action: stub("release")},
+			{
+				Name:   "release",
+				Usage:  "cut a calver tag and push",
+				Flags:  cmd.ReleaseFlags(),
+				Action: cmd.Release,
+			},
 			{Name: "self-update", Usage: "update the lazure binary from GitHub releases", Action: stub("self-update")},
 
 			// Ops / day-two
