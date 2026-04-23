@@ -366,8 +366,6 @@ func buildProbe(kind string, p *lazurecfg.Probe) Probe {
 	if p.TCP != nil {
 		out.TCPSocket = &TCPAction{Port: p.TCP.Port}
 	}
-	// Note: lazurecfg.Probe.Exec is rejected by validate.go (697.47) — ACA
-	// doesn't support exec probes — so we never emit one here.
 	return out
 }
 

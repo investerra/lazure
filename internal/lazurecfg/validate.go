@@ -375,16 +375,13 @@ func validateProbe(where string, p *Probe, r *ValidationResult) {
 	if p.TCP != nil {
 		count++
 	}
-	if len(p.Exec) > 0 {
-		count++
-	}
 	switch count {
 	case 0:
-		r.addError("%s: exactly one of http/tcp/exec must be set", where)
+		r.addError("%s: exactly one of http/tcp must be set", where)
 	case 1:
 		// ok
 	default:
-		r.addError("%s: only one of http/tcp/exec may be set (got %d)", where, count)
+		r.addError("%s: only one of http/tcp may be set (got %d)", where, count)
 	}
 	if p.HTTP != nil {
 		if p.HTTP.Path == "" {

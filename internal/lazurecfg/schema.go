@@ -176,11 +176,13 @@ type Probes struct {
 	Startup   *Probe `json:"startup,omitempty"`
 }
 
-// Probe — exactly one of Http/TCP/Exec is set per entry.
+// Probe — exactly one of Http/TCP is set per entry. Azure Container
+// Apps does not support exec probes (unlike Kubernetes), so we don't
+// model them — any `exec:` key in user YAML is silently dropped by the
+// YAML decoder and then fails the "exactly one of http/tcp" rule.
 type Probe struct {
 	HTTP             *HTTPProbe `json:"http,omitempty"`
 	TCP              *TCPProbe  `json:"tcp,omitempty"`
-	Exec             []string   `json:"exec,omitempty"`
 	InitialDelay     int        `json:"initial_delay,omitempty"`
 	Period           int        `json:"period,omitempty"`
 	Timeout          int        `json:"timeout,omitempty"`

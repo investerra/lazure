@@ -166,8 +166,7 @@ type VolumeMount struct {
 // Probe — ARM wraps probes as an array tagged by Type rather than a
 // liveness/readiness/startup map. ACA supports exactly TWO probe action
 // types: HTTPGet and TCPSocket. There is no exec probe in ACA (unlike
-// Kubernetes). Our lazurecfg schema's `exec:` probe must be rejected by
-// validate.go at transform time.
+// Kubernetes).
 type Probe struct {
 	Type                          string      `json:"type"` // Liveness | Readiness | Startup
 	HTTPGet                       *HTTPAction `json:"httpGet,omitempty"`

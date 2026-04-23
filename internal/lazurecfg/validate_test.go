@@ -3,6 +3,8 @@ package lazurecfg
 import (
 	"strings"
 	"testing"
+
+	"sigs.k8s.io/yaml"
 )
 
 // validManifest returns a minimally-valid manifest for use as a baseline
@@ -375,7 +377,7 @@ func TestValidate_Probe_ExactlyOneType(t *testing.T) {
 		TCP:  &TCPProbe{Port: 80},
 	}}
 	r := Validate(m)
-	if !errorsContain(r.Errors, "only one of http/tcp/exec") {
+	if !errorsContain(r.Errors, "only one of http/tcp") {
 		t.Errorf("got %v", r.Errors)
 	}
 }
@@ -384,7 +386,37 @@ func TestValidate_Probe_None(t *testing.T) {
 	m := validManifest()
 	m.Containers[0].Probes = &Probes{Liveness: &Probe{}}
 	r := Validate(m)
-	if !errorsContain(r.Errors, "exactly one of http/tcp/exec") {
+	if !errorsContain(r.Errors, "exactly one of http/tcp") {
+		t.Errorf("got %v", r.Errors)
+	}
+}
+
+// TestValidate_Probe_ExecYAMLSilentlyDropped — ACA doesn't support exec
+// probes, so we don't model Probe.Exec. A user YAML with `exec:` set
+// has that key silently dropped by sigs.k8s.io/yaml, then fails the
+// "exactly one of http/tcp" rule as if the probe were empty.
+func TestValidate_Probe_ExecYAMLSilentlyDropped(t *testing.T) {
+	y := []byte(`
+app:
+  name: a
+  location: switzerlandnorth
+  resource_group: rg
+  managed_environment_id: /subscriptions/s/resourceGroups/rg/providers/Microsoft.App/managedEnvironments/me
+  identity: /subscriptions/s/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id
+containers:
+  - name: app
+    image: x
+    resources: { cpu: 0.5, memory: 1Gi }
+    probes:
+      liveness:
+        exec: ["/bin/sh", "-c", "true"]
+`)
+	var m Manifest
+	if err := yaml.Unmarshal(y, &m); err != nil {
+		t.Fatal(err)
+	}
+	r := Validate(&m)
+	if !errorsContain(r.Errors, "exactly one of http/tcp") {
 		t.Errorf("got %v", r.Errors)
 	}
 }
