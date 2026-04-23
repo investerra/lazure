@@ -110,7 +110,13 @@ func newApp() *cli.Command {
 				Flags:     cmd.RollbackFlags(),
 				Action:    cmd.Rollback,
 			},
-			{Name: "restart", Usage: "restart a revision", Arguments: envArg(), Action: stub("restart")},
+			{
+				Name:      "restart",
+				Usage:     "restart a revision",
+				Arguments: envArg(),
+				Flags:     cmd.RestartFlags(),
+				Action:    cmd.Restart,
+			},
 			{Name: "exec", Usage: "exec into a container (shells out to az)", Arguments: envArg(), Action: stub("exec")},
 			{Name: "doctor", Usage: "preflight diagnostic checks", Action: stub("doctor")},
 
