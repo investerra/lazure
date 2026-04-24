@@ -214,7 +214,7 @@ func TestValidate_Scale_Rule_TwoTypes(t *testing.T) {
 		Min: 1, Max: 3,
 		Rules: []ScaleRule{{
 			Name: "r1",
-			Http: &HTTPScaler{ConcurrentRequests: 10},
+			HTTP: &HTTPScaler{ConcurrentRequests: 10},
 			CPU:  &MetricScaler{Type: "utilization", Value: 70},
 		}},
 	}
@@ -232,6 +232,63 @@ func TestValidate_Scale_CPU_BadType(t *testing.T) {
 	r := Validate(m)
 	if !errorsContain(r.Errors, "cpu.type") {
 		t.Errorf("got %v", r.Errors)
+	}
+}
+
+// ---------- scale-rule threshold rules ----------
+
+func TestValidate_Scale_HTTP_ZeroConcurrentRequests(t *testing.T) {
+	m := validManifest()
+	m.Scale = &Scale{Min: 1, Max: 3, Rules: []ScaleRule{{
+		Name: "http-r", HTTP: &HTTPScaler{ConcurrentRequests: 0},
+	}}}
+	r := Validate(m)
+	if !errorsContain(r.Errors, "concurrent_requests must be > 0") {
+		t.Errorf("got %v", r.Errors)
+	}
+}
+
+func TestValidate_Scale_HTTP_NegativeConcurrentRequests(t *testing.T) {
+	m := validManifest()
+	m.Scale = &Scale{Min: 1, Max: 3, Rules: []ScaleRule{{
+		Name: "http-r", HTTP: &HTTPScaler{ConcurrentRequests: -5},
+	}}}
+	r := Validate(m)
+	if !errorsContain(r.Errors, "concurrent_requests must be > 0") {
+		t.Errorf("got %v", r.Errors)
+	}
+}
+
+func TestValidate_Scale_HTTP_PositiveOK(t *testing.T) {
+	m := validManifest()
+	m.Scale = &Scale{Min: 1, Max: 3, Rules: []ScaleRule{{
+		Name: "http-r", HTTP: &HTTPScaler{ConcurrentRequests: 10},
+	}}}
+	r := Validate(m)
+	if r.HasErrors() {
+		t.Errorf("positive threshold should pass, got %v", r.Errors)
+	}
+}
+
+func TestValidate_Scale_TCP_ZeroConcurrentConnections(t *testing.T) {
+	m := validManifest()
+	m.Scale = &Scale{Min: 1, Max: 3, Rules: []ScaleRule{{
+		Name: "tcp-r", TCP: &TCPScaler{ConcurrentConnections: 0},
+	}}}
+	r := Validate(m)
+	if !errorsContain(r.Errors, "concurrent_connections must be > 0") {
+		t.Errorf("got %v", r.Errors)
+	}
+}
+
+func TestValidate_Scale_TCP_PositiveOK(t *testing.T) {
+	m := validManifest()
+	m.Scale = &Scale{Min: 1, Max: 3, Rules: []ScaleRule{{
+		Name: "tcp-r", TCP: &TCPScaler{ConcurrentConnections: 5},
+	}}}
+	r := Validate(m)
+	if r.HasErrors() {
+		t.Errorf("positive threshold should pass, got %v", r.Errors)
 	}
 }
 

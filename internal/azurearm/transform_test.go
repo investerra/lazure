@@ -104,7 +104,7 @@ func TestTransform_Scale_HTTPRule(t *testing.T) {
 	m := baseManifest()
 	m.Scale = &lazurecfg.Scale{Min: 1, Max: 10, Rules: []lazurecfg.ScaleRule{{
 		Name: "http-r",
-		Http: &lazurecfg.HTTPScaler{ConcurrentRequests: 10},
+		HTTP: &lazurecfg.HTTPScaler{ConcurrentRequests: 10},
 	}}}
 	app, _ := Transform(m, TransformOptions{})
 	rule := app.Properties.Template.Scale.Rules[0]
@@ -122,7 +122,7 @@ func TestTransform_Scale_HTTPRule_OmitsZeroMetadata(t *testing.T) {
 	m := baseManifest()
 	m.Scale = &lazurecfg.Scale{Min: 1, Max: 10, Rules: []lazurecfg.ScaleRule{{
 		Name: "http-r",
-		Http: &lazurecfg.HTTPScaler{ConcurrentRequests: 0},
+		HTTP: &lazurecfg.HTTPScaler{ConcurrentRequests: 0},
 	}}}
 	app, _ := Transform(m, TransformOptions{})
 	rule := app.Properties.Template.Scale.Rules[0]

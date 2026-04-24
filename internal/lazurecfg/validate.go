@@ -177,7 +177,7 @@ func validateScaleRule(i int, rule ScaleRule, r *ValidationResult) {
 	}
 	// Exactly one rule type.
 	count := 0
-	if rule.Http != nil {
+	if rule.HTTP != nil {
 		count++
 	}
 	if rule.TCP != nil {
@@ -208,6 +208,16 @@ func validateScaleRule(i int, rule ScaleRule, r *ValidationResult) {
 	}
 	if rule.Memory != nil && rule.Memory.Type != "utilization" && rule.Memory.Type != "average_value" {
 		r.addError("scale.rules[%d] (%q): memory.type = %q, want 'utilization' or 'average_value'", i, rule.Name, rule.Memory.Type)
+	}
+	// HTTP/TCP scale rules without a threshold are nonsensical — ACA
+	// would accept the config but the rule never fires (threshold=0 is
+	// the default state). Reject at manifest-load time instead of
+	// emitting empty metadata that silently broke autoscaling.
+	if rule.HTTP != nil && rule.HTTP.ConcurrentRequests <= 0 {
+		r.addError("scale.rules[%d] (%q): http.concurrent_requests must be > 0 (got %d)", i, rule.Name, rule.HTTP.ConcurrentRequests)
+	}
+	if rule.TCP != nil && rule.TCP.ConcurrentConnections <= 0 {
+		r.addError("scale.rules[%d] (%q): tcp.concurrent_connections must be > 0 (got %d)", i, rule.Name, rule.TCP.ConcurrentConnections)
 	}
 }
 

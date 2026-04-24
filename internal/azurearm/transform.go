@@ -445,10 +445,10 @@ func buildScaleRule(r lazurecfg.ScaleRule, appIdentity string) ScaleRule {
 	out := ScaleRule{Name: r.Name}
 
 	switch {
-	case r.Http != nil:
+	case r.HTTP != nil:
 		meta := map[string]string{}
-		if r.Http.ConcurrentRequests > 0 {
-			meta["concurrentRequests"] = strconv.Itoa(r.Http.ConcurrentRequests)
+		if r.HTTP.ConcurrentRequests > 0 {
+			meta["concurrentRequests"] = strconv.Itoa(r.HTTP.ConcurrentRequests)
 		}
 		out.HTTP = &HTTPScaleRule{Metadata: meta}
 		applyScalerAuth(r.Auth, appIdentity,

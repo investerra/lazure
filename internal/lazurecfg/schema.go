@@ -86,10 +86,10 @@ type Scale struct {
 	Rules           []ScaleRule `json:"rules,omitempty"`
 }
 
-// ScaleRule — exactly one of Http/Tcp/CPU/Memory/AzureQueue/Custom is set.
+// ScaleRule — exactly one of HTTP/TCP/CPU/Memory/AzureQueue/Custom is set.
 type ScaleRule struct {
 	Name       string            `json:"name"`
-	Http       *HTTPScaler       `json:"http,omitempty"`
+	HTTP       *HTTPScaler       `json:"http,omitempty"`
 	TCP        *TCPScaler        `json:"tcp,omitempty"`
 	CPU        *MetricScaler     `json:"cpu,omitempty"`
 	Memory     *MetricScaler     `json:"memory,omitempty"`
@@ -176,7 +176,7 @@ type Probes struct {
 	Startup   *Probe `json:"startup,omitempty"`
 }
 
-// Probe — exactly one of Http/TCP is set per entry. Azure Container
+// Probe — exactly one of HTTP/TCP is set per entry. Azure Container
 // Apps does not support exec probes (unlike Kubernetes), so we don't
 // model them — any `exec:` key in user YAML is silently dropped by the
 // YAML decoder and then fails the "exactly one of http/tcp" rule.
