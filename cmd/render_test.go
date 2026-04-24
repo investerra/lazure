@@ -144,11 +144,8 @@ func TestRender_ValidManifest_ProducesValidARMYaml(t *testing.T) {
 	if !strings.Contains(out, "location: switzerlandnorth") {
 		t.Error("missing location")
 	}
-	// Template-interpolated fields got substituted.
-	if !strings.Contains(out, "resourceGroup:") {
-		// ARM uses the wrapper struct; resource_group lives in the request URL,
-		// not the body. Skip the assertion and check image instead.
-	}
+	// ARM uses the wrapper struct; resource_group lives in the request URL,
+	// not the body. Skip the assertion and check image instead.
 	if !strings.Contains(out, "acr.io/app:") {
 		t.Errorf("image template not rendered. output:\n%s", out)
 	}

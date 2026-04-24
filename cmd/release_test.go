@@ -264,9 +264,10 @@ func TestAllTerminal(t *testing.T) {
 	if allTerminal([]ghRun{{Status: "completed"}, {Status: "in_progress"}}) {
 		t.Error("one in_progress must make set non-terminal")
 	}
-	if !allTerminal(nil) {
-		// Vacuously true — but callers check len(runs) > 0 separately.
-	}
+	// Vacuously true — callers check len(runs) > 0 separately before
+	// relying on allTerminal's verdict. Documented here as a known
+	// edge case rather than asserted.
+	_ = allTerminal(nil)
 }
 
 // ---------- firstFailedStep ----------

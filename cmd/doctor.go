@@ -104,9 +104,8 @@ type checkResult struct {
 type envCheck struct {
 	env     string
 	status  checkStatus // worst of the subchecks; determines the env line's mark
-	subs    []checkResult
-	overall string // e.g. "vars ✓  secrets decrypt ✓  manifest renders ✓  KV reachable ✓"
-	failMsg string // populated only on failure — the underlying error text
+	overall string      // e.g. "vars ✓  secrets decrypt ✓  manifest renders ✓  KV reachable ✓"
+	failMsg string      // populated only on failure — the underlying error text
 }
 
 type section struct {
@@ -420,7 +419,7 @@ func renderDoctorText(sections []section, color bool) string {
 			for _, ec := range sec.envChecks {
 				b.WriteString("    ")
 				mark := markFor(ec.status, color)
-				b.WriteString(fmt.Sprintf("%s %s    %s\n", mark, padRight(ec.env, 8), ec.overall))
+				fmt.Fprintf(&b, "%s %s    %s\n", mark, padRight(ec.env, 8), ec.overall)
 				if ec.status == statusFail && ec.failMsg != "" {
 					for i, line := range strings.Split(strings.TrimSpace(ec.failMsg), "\n") {
 						prefix := "        └─ "
@@ -504,11 +503,10 @@ type doctorJSONCheck struct {
 }
 
 type doctorJSONEnv struct {
-	Env      string            `json:"env"`
-	Status   string            `json:"status"`
-	Overall  string            `json:"overall"`
-	FailMsg  string            `json:"fail_msg,omitempty"`
-	Subcheck []doctorJSONCheck `json:"subchecks,omitempty"`
+	Env     string `json:"env"`
+	Status  string `json:"status"`
+	Overall string `json:"overall"`
+	FailMsg string `json:"fail_msg,omitempty"`
 }
 
 type doctorJSONSection struct {

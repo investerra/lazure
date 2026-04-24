@@ -70,7 +70,7 @@ func TestMarshalPlainSecrets_Deterministic(t *testing.T) {
 	idxA := strings.Index(s, "aaa:")
 	idxM := strings.Index(s, "middle:")
 	idxZ := strings.Index(s, "zzz:")
-	if !(idxA < idxM && idxM < idxZ) {
+	if idxA >= idxM || idxM >= idxZ {
 		t.Errorf("keys not in alphabetical order: %s", s)
 	}
 

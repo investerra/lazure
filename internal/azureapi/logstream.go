@@ -105,7 +105,7 @@ func StreamLogs(ctx context.Context, endpoint, token string, opts LogStreamOptio
 	if err != nil {
 		return errs.Wrap(err, "logstream: connect")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))

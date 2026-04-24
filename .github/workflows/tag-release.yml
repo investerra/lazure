@@ -1,0 +1,100 @@
+name: tag-release
+
+# Manually-triggered release cutter. Computes the next semver tag based
+# on the selected bump type, generates a changelog from the git log
+# since the previous tag, and pushes the tag. The push then triggers
+# release.yml which runs goreleaser and publishes assets.
+#
+# Use this from the Actions tab: "Run workflow" → pick bump type.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "version bump"
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          # Full history + tags so we can find the previous release and
+          # build a changelog against it.
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          # Newest existing semver tag, empty on first release.
+          latest=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+          if [ -z "$latest" ]; then
+            latest="v0.0.0"
+          fi
+          ver=${latest#v}
+          IFS=. read -r maj min pat <<< "$ver"
+          case "$BUMP" in
+            major) maj=$((maj + 1)); min=0; pat=0 ;;
+            minor) min=$((min + 1)); pat=0 ;;
+            patch) pat=$((pat + 1)) ;;
+            *) echo "unknown bump: $BUMP" >&2; exit 1 ;;
+          esac
+          new="v${maj}.${min}.${pat}"
+          echo "previous=$latest" >> "$GITHUB_OUTPUT"
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+          echo "Bumping $latest → $new"
+
+      - name: Generate changelog
+        id: changelog
+        env:
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+        run: |
+          set -euo pipefail
+          if [ "$PREVIOUS" = "v0.0.0" ]; then
+            # First release — cap at 50 commits to keep the message readable.
+            body=$(git log --pretty='- %s' -n 50 HEAD)
+            total=$(git rev-list --count HEAD)
+            if [ "$total" -gt 50 ]; then
+              body="${body}"$'\n'"... and $((total - 50)) more"
+            fi
+          else
+            body=$(git log "${PREVIOUS}..HEAD" --pretty='- %s')
+          fi
+          if [ -z "$body" ]; then
+            body="(no changes)"
+          fi
+          {
+            echo 'body<<EOF_CHANGELOG'
+            echo "$body"
+            echo 'EOF_CHANGELOG'
+          } >> "$GITHUB_OUTPUT"
+          echo "---- changelog ----"
+          echo "$body"
+
+      - name: Create and push tag
+        env:
+          NEW: ${{ steps.version.outputs.new }}
+          BODY: ${{ steps.changelog.outputs.body }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # -m once for subject, -m again for body → annotated tag with
+          # a proper separation in `git show <tag>`.
+          git tag -a "$NEW" -m "$NEW" -m "$BODY"
+          git push origin "$NEW"
+          echo "Pushed $NEW — release.yml will now build and publish assets."

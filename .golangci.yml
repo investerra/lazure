@@ -1,0 +1,21 @@
+version: "2"
+
+# Use the default linter set; the noise filtering below is what makes
+# this config useful. Add individual `enable:` entries if we ever want
+# linters outside the default (e.g. gocritic, dupl).
+linters:
+  default: standard
+
+  exclusions:
+    rules:
+      # fmt.Fprint*/Print* return (n, err); the error is almost always
+      # "broken pipe" on a terminal no one can recover from. Idiomatic
+      # Go ignores these. Keeping errcheck on non-fmt errors.
+      - linters: [errcheck]
+        source: "fmt\\.F?print(f|ln)?"
+
+      # Test code often ignores Close() / os.Setenv returns because the
+      # tempdir/tempfile gets torn down regardless. Real production
+      # code errors are still flagged by not matching this rule.
+      - path: _test\.go
+        linters: [errcheck]

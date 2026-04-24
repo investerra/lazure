@@ -1,13 +1,13 @@
 name: release
 
-# Triggered by both semver and calver tag pushes. lazure uses calver
-# (v{YYYYMMDD}.N) in its own `release` command, but keep semver support
-# in case a future contributor pushes a semver tag manually.
+# Triggered by semver tag pushes. Tags are usually cut via the
+# `tag-release` workflow (workflow_dispatch) which computes the next
+# semver + auto-generates a changelog, but manually-pushed v*.*.* tags
+# work identically.
 on:
   push:
     tags:
       - "v*.*.*"
-      - "v[0-9]*"
 
 # Needed for goreleaser-action to create the GitHub Release + upload
 # assets. No other privileges required.

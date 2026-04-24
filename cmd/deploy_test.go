@@ -12,7 +12,7 @@ func TestParseCLIVars_Empty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != nil && len(got) != 0 {
+	if len(got) != 0 {
 		t.Errorf("expected nil/empty, got %+v", got)
 	}
 }
