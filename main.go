@@ -148,7 +148,12 @@ func newApp() *cli.Command {
 			},
 
 			// Onboarding
-			{Name: "init", Usage: "scaffold a new lazure project in the current directory", Action: stub("init")},
+			{
+				Name:   "init",
+				Usage:  "scaffold a new lazure project in the current directory",
+				Flags:  cmd.InitFlags(),
+				Action: cmd.Init,
+			},
 
 			// Config surface
 			cmd.SecretsCommand(),
