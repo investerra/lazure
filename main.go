@@ -19,6 +19,9 @@ var Version = "dev"
 var errNotImplemented = errs.New("not implemented yet")
 
 func main() {
+	// Register this package's build-time Version with the selfupdate
+	// command so it can compare against GitHub Releases.
+	cmd.SetVersionGetter(func() string { return Version })
 	app := newApp()
 	ctx := context.Background()
 	if err := app.Run(ctx, os.Args); err != nil {
@@ -95,7 +98,12 @@ func newApp() *cli.Command {
 				Flags:  cmd.ReleaseFlags(),
 				Action: cmd.Release,
 			},
-			{Name: "self-update", Usage: "update the lazure binary from GitHub releases", Action: stub("self-update")},
+			{
+				Name:   "self-update",
+				Usage:  "update the lazure binary from GitHub releases",
+				Flags:  cmd.SelfUpdateFlags(),
+				Action: cmd.SelfUpdate,
+			},
 
 			// Ops / day-two
 			{

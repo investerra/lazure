@@ -1,9 +1,6 @@
 # lazure
 
-A Go CLI for deploying and managing Azure Container Apps. Replaces the
-Python PoC that lived in `api-server/scripts/deploy.py` with a first-class
-tool: higher-level YAML schema, SOPS-integrated secrets, direct ARM REST
-calls, multi-container + per-env manifest support.
+A Go CLI for deploying and managing Azure Container Apps.
 
 ## Install
 
