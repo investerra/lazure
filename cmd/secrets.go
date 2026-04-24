@@ -61,10 +61,9 @@ func SecretsCommand() *cli.Command {
 				Usage:     "upload all SOPS secrets to Key Vault",
 				Arguments: envArgs(),
 				Flags: []cli.Flag{
-					&cli.BoolFlag{Name: "prune", Usage: "ALSO delete KV secrets not present in SOPS (irreversible, always prompts)"},
-					&cli.BoolFlag{Name: "dry-run", Usage: "print planned operations, do not call KV"},
+					&cli.BoolFlag{Name: "dry-run", Usage: "print planned PUT operations without writing to Key Vault"},
 					&cli.IntFlag{Name: "concurrency", Usage: "parallel HTTP calls", Value: 10},
-					&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "skip the confirmation prompt for upsert (prune still prompts)"},
+					&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "skip the confirmation prompt"},
 				},
 				Action: SecretsSync,
 			},
@@ -319,21 +318,24 @@ func SecretsVerify(ctx context.Context, c *cli.Command) error {
 
 // ---------- sync ----------
 
-// SecretsSync implements `lazure secrets sync <env> [--prune] [--dry-run]
-// [--concurrency=N] [-y]`.
+// SecretsSync implements `lazure secrets sync <env> [--dry-run]
+// [--concurrency=N] [-y]`. Upserts every SOPS-encrypted secret into
+// Key Vault; never deletes. KV secrets not present in SOPS are left
+// alone — delete them manually via `az keyvault secret delete` if
+// that's truly what you want. Automated pruning was intentionally
+// removed as too dangerous a default for a declarative-style tool.
 func SecretsSync(ctx context.Context, c *cli.Command) error {
 	env, encPath, err := secretsEnvPath(c)
 	if err != nil {
 		return err
 	}
-	prune := c.Bool("prune")
 	dryRun := c.Bool("dry-run")
 	concurrency := int(c.Int("concurrency"))
 	if concurrency < 1 {
 		concurrency = 1
 	}
 	yes := c.Bool("yes")
-	slog.Debug("secrets sync: start", "env", env, "prune", prune, "dry_run", dryRun, "concurrency", concurrency)
+	slog.Debug("secrets sync: start", "env", env, "dry_run", dryRun, "concurrency", concurrency)
 
 	slog.Debug("secrets sync: decrypting")
 	secrets, err := sopsio.Decrypt(encPath)
@@ -354,7 +356,6 @@ func SecretsSync(ctx context.Context, c *cli.Command) error {
 	slog.Debug("secrets sync: KV client ready", "vault", vaultURL)
 	kv := azureapi.NewKeyVaultClient(vaultURL, tokens)
 
-	// Upsert confirmation (skipped with -y); prune ALWAYS confirms below.
 	if !yes {
 		fmt.Printf("will sync %d secret(s) to %s [env=%s]\n", len(secrets), vaultURL, env)
 		if dryRun {
@@ -365,20 +366,10 @@ func SecretsSync(ctx context.Context, c *cli.Command) error {
 		}
 	}
 
-	// Upsert in parallel.
 	if err := syncUpsert(ctx, kv, secrets, concurrency, dryRun); err != nil {
 		return errs.System(errs.Wrap(err, "secrets sync: upsert"))
 	}
-
-	if !prune {
-		slog.Info("sync complete", "env", env, "secret", fmt.Sprintf("%d synced", len(secrets)))
-		return nil
-	}
-
-	if err := syncPrune(ctx, kv, secrets, concurrency, dryRun); err != nil {
-		return errs.System(errs.Wrap(err, "secrets sync: prune"))
-	}
-	slog.Info("sync + prune complete", "env", env)
+	slog.Info("sync complete", "env", env, "secret", fmt.Sprintf("%d synced", len(secrets)))
 	return nil
 }
 
@@ -403,53 +394,6 @@ func syncUpsert(ctx context.Context, kv *azureapi.KeyVaultClient, secrets map[st
 	return eg.Wait()
 }
 
-func syncPrune(ctx context.Context, kv *azureapi.KeyVaultClient, sopsSecrets map[string]string, concurrency int, dryRun bool) error {
-	kvNames, err := kv.ListSecrets(ctx)
-	if err != nil {
-		return errs.Wrap(err, "list KV")
-	}
-	var toDelete []string
-	for _, name := range kvNames {
-		if _, inSOPS := sopsSecrets[name]; !inSOPS {
-			toDelete = append(toDelete, name)
-		}
-	}
-	sort.Strings(toDelete)
-
-	if len(toDelete) == 0 {
-		fmt.Println("no KV secrets to prune")
-		return nil
-	}
-
-	// PRUNE ALWAYS CONFIRMS, even with -y. Design memo: irreversible
-	// deletion must have an explicit separate confirmation.
-	fmt.Printf("\nprune will DELETE %d secret(s) from Key Vault:\n", len(toDelete))
-	for _, n := range toDelete {
-		fmt.Printf("  - %s\n", n)
-	}
-	if !promptConfirm("proceed with deletion?") {
-		return errs.New("prune aborted by user")
-	}
-
-	eg, egCtx := errgroup.WithContext(ctx)
-	eg.SetLimit(concurrency)
-	for _, name := range toDelete {
-		name := name
-		eg.Go(func() error {
-			if dryRun {
-				fmt.Printf("would DELETE %s\n", name)
-				return nil
-			}
-			if err := kv.DeleteSecret(egCtx, name); err != nil {
-				fmt.Printf("✗ delete %s: %v\n", name, err)
-				return err
-			}
-			fmt.Printf("✓ deleted %s\n", name)
-			return nil
-		})
-	}
-	return eg.Wait()
-}
 
 // ---------- helpers ----------
 

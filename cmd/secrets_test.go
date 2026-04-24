@@ -253,3 +253,4 @@ func TestSecretsView_InvalidFormat(t *testing.T) {
 	// Missing fixture triggers decrypt failure first; that's fine. The
 	// key test is that the command at least parses + runs.
 }
+
