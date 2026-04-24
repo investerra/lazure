@@ -140,7 +140,12 @@ func newApp() *cli.Command {
 				Flags:     cmd.ExecFlags(),
 				Action:    cmd.Exec,
 			},
-			{Name: "doctor", Usage: "preflight diagnostic checks", Action: stub("doctor")},
+			{
+				Name:   "doctor",
+				Usage:  "preflight diagnostic checks",
+				Flags:  cmd.DoctorFlags(),
+				Action: cmd.Doctor,
+			},
 
 			// Onboarding
 			{Name: "init", Usage: "scaffold a new lazure project in the current directory", Action: stub("init")},
