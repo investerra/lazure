@@ -26,6 +26,10 @@ func DeployFlags() []cli.Flag {
 		&cli.BoolFlag{Name: "print", Usage: "dump generated ARM YAML to stdout before confirming"},
 		&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "skip the confirmation prompt"},
 		&cli.StringSliceFlag{Name: "var", Usage: "override a vars entry (repeatable): key=value"},
+		&cli.BoolFlag{Name: "wait", Usage: "after ARM succeeds, wait until the new revision's replicas are Ready"},
+		&cli.DurationFlag{Name: "wait-timeout", Value: 5 * time.Minute, Usage: "max wait time (default: 5m)"},
+		&cli.BoolFlag{Name: "logs", Value: true, Usage: "stream logs from the first ready replica during --wait (--logs=false to disable)"},
+		&cli.BoolFlag{Name: "no-color", Usage: "disable ANSI colors in streamed logs (also honored via NO_COLOR env)"},
 	}
 }
 
@@ -48,6 +52,10 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 	dir := c.String("dir")
 	print := c.Bool("print")
 	yes := c.Bool("yes")
+	wait := c.Bool("wait")
+	waitTimeout := c.Duration("wait-timeout")
+	streamLogs := c.Bool("logs")
+	color := shouldColor(c.Bool("no-color"))
 
 	cliVars, err := parseCLIVars(c.StringSlice("var"))
 	if err != nil {
@@ -157,6 +165,19 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 		"env", env,
 		"revision", final.Properties.LatestRevisionName,
 		"duration", time.Since(start).Round(time.Second))
+
+	if wait {
+		newRev := final.Properties.LatestRevisionName
+		if newRev == "" {
+			slog.Warn("deploy: no latestRevisionName after PutAndWait — skipping --wait")
+			return nil
+		}
+		if err := waitForRevisionReady(ctx, ca, sub, rg, name, newRev, waitTimeout, streamLogs, color); err != nil {
+			return errs.System(errs.Wrap(err, "deploy: --wait"))
+		}
+		slog.Info("deploy --wait complete — all replicas Ready",
+			"app", name, "revision", newRev)
+	}
 	return nil
 }
 

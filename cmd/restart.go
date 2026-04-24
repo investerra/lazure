@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/urfave/cli/v3"
@@ -22,6 +23,8 @@ func RestartFlags() []cli.Flag {
 		&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "skip the confirmation prompt"},
 		&cli.BoolFlag{Name: "wait", Usage: "wait until all replicas have been replaced and are Ready"},
 		&cli.DurationFlag{Name: "wait-timeout", Value: 5 * time.Minute, Usage: "max wait time (default: 5m)"},
+		&cli.BoolFlag{Name: "logs", Value: true, Usage: "stream logs from the first new replica during --wait (--logs=false to disable)"},
+		&cli.BoolFlag{Name: "no-color", Usage: "disable ANSI colors in streamed logs (also honored via NO_COLOR env)"},
 	}
 }
 
@@ -47,7 +50,11 @@ func Restart(ctx context.Context, c *cli.Command) error {
 	yes := c.Bool("yes")
 	wait := c.Bool("wait")
 	waitTimeout := c.Duration("wait-timeout")
-	slog.Debug("restart: start", "env", env, "revision", rev, "yes", yes, "wait", wait, "wait_timeout", waitTimeout)
+	streamLogs := c.Bool("logs")
+	color := shouldColor(c.Bool("no-color"))
+	slog.Debug("restart: start",
+		"env", env, "revision", rev, "yes", yes, "wait", wait,
+		"wait_timeout", waitTimeout, "logs", streamLogs)
 
 	manifest, _, err := lazurecfg.LoadManifest(lazurecfg.LoadOptions{ProjectDir: dir, Env: env})
 	if err != nil {
@@ -111,7 +118,7 @@ func Restart(ctx context.Context, c *cli.Command) error {
 	}
 
 	start := time.Now()
-	if err := waitForRestart(ctx, ca, sub, rg, name, rev, baseline, waitTimeout); err != nil {
+	if err := waitForRestart(ctx, ca, sub, rg, name, rev, baseline, waitTimeout, streamLogs, color); err != nil {
 		return errs.System(errs.Wrap(err, "restart: --wait"))
 	}
 	slog.Info("restart complete — all replicas replaced and Ready",
@@ -139,10 +146,17 @@ func replicaNameSet(replicas []azurearm.Replica) map[string]struct{} {
 // Shows a TTY spinner with elapsed/remaining countdown while waiting;
 // auto-noops to plain polling when stderr isn't a terminal (CI, pipes).
 //
+// When streamLogs is true, the first new replica to reach Ready state
+// becomes the log-stream target: the spinner stops (logs are the more
+// informative progress signal from that point) and a goroutine follows
+// that replica's logs to stdout until the restart completes. ctx is
+// cancelled on completion so the stream returns cleanly.
+//
 // Returns ctx.Err() if the context is cancelled, or a timeout error if
 // the deadline is hit without seeing all-new + all-Ready state.
 func waitForRestart(ctx context.Context, ca *azureapi.ContainerAppsClient,
 	sub, rg, name, rev string, baseline map[string]struct{}, timeout time.Duration,
+	streamLogs, color bool,
 ) error {
 	deadline := time.Now().Add(timeout)
 	slog.Debug("restart: polling for replica replacement", "timeout", timeout)
@@ -151,6 +165,24 @@ func waitForRestart(ctx context.Context, ca *azureapi.ContainerAppsClient,
 	sp.SetMessage("waiting for replicas to restart")
 	sp.Start()
 	defer sp.Stop()
+
+	var (
+		streamCtx, streamCancel = context.WithCancel(ctx)
+		streamDone              = make(chan struct{})
+		streamStarted           = false
+	)
+	defer func() {
+		streamCancel()
+		if streamStarted {
+			// Brief grace period for the stream goroutine to exit on
+			// ctx cancel. 2s is well over the typical HTTP close cost
+			// and keeps the user from waiting noticeably at the end.
+			select {
+			case <-streamDone:
+			case <-time.After(2 * time.Second):
+			}
+		}
+	}()
 
 	for {
 		if time.Now().After(deadline) {
@@ -175,12 +207,56 @@ func waitForRestart(ctx context.Context, ca *azureapi.ContainerAppsClient,
 			"new_total", status.newTotal,
 			"done", done)
 
-		sp.SetMessage(spinnerMessage(status))
+		// Start streaming as soon as a new ready replica is available.
+		// Logs become the progress signal; spinner stops to avoid
+		// garbling output with the live stream.
+		if streamLogs && !streamStarted {
+			if target, ok := findFirstNewReadyReplica(current, baseline); ok {
+				streamStarted = true
+				sp.Stop()
+				fmt.Fprintf(os.Stderr, "\nstreaming logs from %s:\n", target.Name)
+				go func(replicaName string) {
+					defer close(streamDone)
+					err := streamContainerLogs(streamCtx, ca, sub, rg, name, rev,
+						streamLogsOptions{
+							Replica: replicaName,
+							Follow:  true,
+							Tail:    0,
+							Color:   color,
+							Out:     os.Stdout,
+						})
+					if err != nil && !errors.Is(err, context.Canceled) {
+						slog.Warn("restart: log stream ended early", "err", err)
+					}
+				}(target.Name)
+			}
+		}
+
+		if !streamStarted {
+			sp.SetMessage(spinnerMessage(status))
+		}
 
 		if done {
 			return nil
 		}
 	}
+}
+
+// findFirstNewReadyReplica returns the first replica in `current` that
+// is NOT in `baseline` AND has all its containers Ready. Returns
+// (zero, false) if no such replica exists — caller loops and checks
+// again next tick. Iteration order mirrors the input so the choice is
+// deterministic relative to Azure's response ordering.
+func findFirstNewReadyReplica(current []azurearm.Replica, baseline map[string]struct{}) (azurearm.Replica, bool) {
+	for _, r := range current {
+		if _, wasBaseline := baseline[r.Name]; wasBaseline {
+			continue
+		}
+		if replicaAllContainersReady(r) {
+			return r, true
+		}
+	}
+	return azurearm.Replica{}, false
 }
 
 // spinnerMessage renders the current poll status as a compact string
@@ -253,4 +329,145 @@ func replicaAllContainersReady(r azurearm.Replica) bool {
 		}
 	}
 	return true
+}
+
+// ---------- revision-ready wait (shared by deploy + rollback) ----------
+
+// waitForRevisionReady polls ListReplicas(rev) until every replica of
+// the given revision has all containers Ready. Used by `deploy --wait`
+// and `rollback --wait` to confirm the new/target revision is truly
+// serving rather than just "Azure accepted the request".
+//
+// Semantics differ from waitForRestart:
+//   - No baseline diff — all replicas under `rev` are by definition
+//     "the new ones" for deploy, or "the target ones" for rollback.
+//   - Completion is "every replica Ready" (with len > 0). The 0-replica
+//     case stays non-done so we keep polling during warmup.
+//
+// Log-streaming behavior is identical to waitForRestart: first replica
+// to be Ready becomes the pinned stream target, spinner stops, stream
+// runs until ctx cancel.
+func waitForRevisionReady(ctx context.Context, ca *azureapi.ContainerAppsClient,
+	sub, rg, name, rev string, timeout time.Duration,
+	streamLogs, color bool,
+) error {
+	deadline := time.Now().Add(timeout)
+	slog.Debug("wait-revision: polling for replicas Ready", "revision", rev, "timeout", timeout)
+
+	sp := newWaitSpinner(deadline)
+	sp.SetMessage("waiting for " + rev + " replicas to be ready")
+	sp.Start()
+	defer sp.Stop()
+
+	var (
+		streamCtx, streamCancel = context.WithCancel(ctx)
+		streamDone              = make(chan struct{})
+		streamStarted           = false
+	)
+	defer func() {
+		streamCancel()
+		if streamStarted {
+			select {
+			case <-streamDone:
+			case <-time.After(2 * time.Second):
+			}
+		}
+	}()
+
+	for {
+		if time.Now().After(deadline) {
+			return errs.Errorf("timed out after %s waiting for %s replicas to be ready", timeout, rev)
+		}
+
+		select {
+		case <-ctx.Done():
+			return errs.Wrap(ctx.Err(), "wait-revision: poll cancelled")
+		case <-time.After(restartPollInterval):
+		}
+
+		replicas, err := ca.ListReplicas(ctx, sub, rg, name, rev)
+		if err != nil {
+			return errs.Wrap(err, "poll list replicas")
+		}
+		slog.Debug("wait-revision: poll tick",
+			"replicas", len(replicas),
+			"all_ready", allRevisionReplicasReady(replicas))
+
+		if streamLogs && !streamStarted {
+			if target, ok := findFirstReadyReplica(replicas); ok {
+				streamStarted = true
+				sp.Stop()
+				fmt.Fprintf(os.Stderr, "\nstreaming logs from %s:\n", target.Name)
+				go func(replicaName string) {
+					defer close(streamDone)
+					err := streamContainerLogs(streamCtx, ca, sub, rg, name, rev,
+						streamLogsOptions{
+							Replica: replicaName,
+							Follow:  true,
+							Tail:    0,
+							Color:   color,
+							Out:     os.Stdout,
+						})
+					if err != nil && !errors.Is(err, context.Canceled) {
+						slog.Warn("wait-revision: log stream ended early", "err", err)
+					}
+				}(target.Name)
+			}
+		}
+
+		if !streamStarted {
+			sp.SetMessage(revisionReadyMessage(replicas))
+		}
+
+		if allRevisionReplicasReady(replicas) {
+			return nil
+		}
+	}
+}
+
+// findFirstReadyReplica returns the first replica whose containers are
+// all Ready, or (zero, false) if none qualify. Simpler than
+// findFirstNewReadyReplica — no baseline to diff against because deploy
+// and rollback operate on revisions whose replicas are all "new" from
+// the command's perspective.
+func findFirstReadyReplica(replicas []azurearm.Replica) (azurearm.Replica, bool) {
+	for _, r := range replicas {
+		if replicaAllContainersReady(r) {
+			return r, true
+		}
+	}
+	return azurearm.Replica{}, false
+}
+
+// allRevisionReplicasReady is the completion check for deploy/rollback
+// --wait. Non-empty input + every replica Ready = done. An empty list
+// stays non-done so we keep polling during Azure's warmup window (can
+// take a few seconds before replicas appear in the list at all).
+func allRevisionReplicasReady(replicas []azurearm.Replica) bool {
+	if len(replicas) == 0 {
+		return false
+	}
+	for _, r := range replicas {
+		if !replicaAllContainersReady(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// revisionReadyMessage produces the spinner status line for the
+// wait-revision poll. Covers three phases: no replicas yet, partial
+// readiness, or all-ready (a transient state right before the loop
+// detects done and returns).
+func revisionReadyMessage(replicas []azurearm.Replica) string {
+	if len(replicas) == 0 {
+		return "waiting for replicas to appear"
+	}
+	ready := 0
+	for _, r := range replicas {
+		if replicaAllContainersReady(r) {
+			ready++
+		}
+	}
+	return fmt.Sprintf("%d/%d replicas ready", ready, len(replicas))
 }

@@ -91,37 +91,22 @@ func Logs(ctx context.Context, c *cli.Command) error {
 		slog.Debug("logs: using current latest revision", "revision", rev)
 	}
 
-	replicas, err := ca.ListReplicas(ctx, sub, rg, name, rev)
-	if err != nil {
-		return errs.System(errs.Wrap(err, "logs: list replicas"))
-	}
-	r, err := pickReplica(replicas, replica)
-	if err != nil {
-		return errs.Usage(err)
-	}
-	cnt, err := pickContainer(r, container)
-	if err != nil {
-		return errs.Usage(err)
-	}
-	if cnt.LogStreamEndpoint == "" {
-		return errs.System(errs.Errorf("logs: container %q on replica %q has no logStreamEndpoint", cnt.Name, r.Name))
-	}
-
-	token, _, err := ca.GetAuthToken(ctx, sub, rg, name)
-	if err != nil {
-		return errs.Auth(errs.Wrap(err, "logs: getAuthToken"))
-	}
-
 	slog.Info("streaming logs",
 		"app", name, "env", env, "revision", rev,
-		"replica", r.Name, "container", cnt.Name, "follow", follow, "tail", tail)
+		"replica", replica, "container", container, "follow", follow, "tail", tail)
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	err = azureapi.StreamLogs(ctx, cnt.LogStreamEndpoint, token,
-		azureapi.LogStreamOptions{Follow: follow, Tail: tail},
-		func(line string) { fmt.Fprintln(os.Stdout, formatLogLine(line, raw, color)) })
+	err = streamContainerLogs(ctx, ca, sub, rg, name, rev, streamLogsOptions{
+		Container: container,
+		Replica:   replica,
+		Follow:    follow,
+		Tail:      tail,
+		Raw:       raw,
+		Color:     color,
+		Out:       os.Stdout,
+	})
 	if errors.Is(err, context.Canceled) {
 		slog.Debug("logs: stream cancelled (Ctrl-C or parent shutdown)")
 		return nil

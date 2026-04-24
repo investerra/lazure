@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/investerra/lazure/internal/azurearm"
@@ -128,5 +129,138 @@ func TestRestartComplete_FirstDeploy_NoBaseline(t *testing.T) {
 	done, _ := restartComplete(current, baseline)
 	if !done {
 		t.Error("no baseline + all-ready current should be done")
+	}
+}
+
+// ---------- findFirstNewReadyReplica ----------
+
+func TestFindFirstNewReadyReplica_ReturnsFirstNewReady(t *testing.T) {
+	baseline := map[string]struct{}{"old-1": {}}
+	current := []azurearm.Replica{
+		replica("old-1", true),        // still there, baseline — skip
+		replica("new-a", true, false), // new but not fully ready
+		replica("new-b", true),        // new + ready → pick this
+		replica("new-c", true),        // also candidate but earlier wins
+	}
+	got, ok := findFirstNewReadyReplica(current, baseline)
+	if !ok {
+		t.Fatal("expected a match")
+	}
+	if got.Name != "new-b" {
+		t.Errorf("got %q, want new-b", got.Name)
+	}
+}
+
+func TestFindFirstNewReadyReplica_NoNewReplicas(t *testing.T) {
+	baseline := map[string]struct{}{"old-1": {}, "old-2": {}}
+	current := []azurearm.Replica{replica("old-1", true), replica("old-2", true)}
+	if _, ok := findFirstNewReadyReplica(current, baseline); ok {
+		t.Error("baseline-only set should produce no match")
+	}
+}
+
+func TestFindFirstNewReadyReplica_NewButNoneReady(t *testing.T) {
+	baseline := map[string]struct{}{"old-1": {}}
+	current := []azurearm.Replica{
+		replica("old-1", true),
+		replica("new-1", true, false), // new but container not ready
+	}
+	if _, ok := findFirstNewReadyReplica(current, baseline); ok {
+		t.Error("new-but-not-ready replica should NOT be picked — we wait for Ready")
+	}
+}
+
+func TestFindFirstNewReadyReplica_EmptyCurrent(t *testing.T) {
+	baseline := map[string]struct{}{"old-1": {}}
+	if _, ok := findFirstNewReadyReplica(nil, baseline); ok {
+		t.Error("empty current replica list should produce no match")
+	}
+}
+
+// ---------- findFirstReadyReplica (deploy/rollback) ----------
+
+func TestFindFirstReadyReplica_FirstReady(t *testing.T) {
+	replicas := []azurearm.Replica{
+		replica("a", true, false), // not fully ready
+		replica("b", true),        // ready → pick
+		replica("c", true),        // also ready but earlier wins
+	}
+	r, ok := findFirstReadyReplica(replicas)
+	if !ok {
+		t.Fatal("expected match")
+	}
+	if r.Name != "b" {
+		t.Errorf("got %q, want b", r.Name)
+	}
+}
+
+func TestFindFirstReadyReplica_NoneReady(t *testing.T) {
+	replicas := []azurearm.Replica{
+		replica("a", false, true),
+		replica("b", true, false),
+	}
+	if _, ok := findFirstReadyReplica(replicas); ok {
+		t.Error("no replica fully ready → no match")
+	}
+}
+
+func TestFindFirstReadyReplica_Empty(t *testing.T) {
+	if _, ok := findFirstReadyReplica(nil); ok {
+		t.Error("empty list → no match")
+	}
+}
+
+// ---------- allRevisionReplicasReady ----------
+
+func TestAllRevisionReplicasReady_AllReady(t *testing.T) {
+	replicas := []azurearm.Replica{
+		replica("a", true),
+		replica("b", true, true),
+	}
+	if !allRevisionReplicasReady(replicas) {
+		t.Error("all replicas fully ready should be complete")
+	}
+}
+
+func TestAllRevisionReplicasReady_OneNotReady(t *testing.T) {
+	replicas := []azurearm.Replica{
+		replica("a", true),
+		replica("b", true, false), // second container not ready
+	}
+	if allRevisionReplicasReady(replicas) {
+		t.Error("any not-ready should fail completion")
+	}
+}
+
+func TestAllRevisionReplicasReady_Empty(t *testing.T) {
+	// Important: empty list stays non-done so the poll keeps going
+	// during Azure's warmup window before replicas appear.
+	if allRevisionReplicasReady(nil) {
+		t.Error("empty list must not be considered done")
+	}
+}
+
+// ---------- revisionReadyMessage ----------
+
+func TestRevisionReadyMessage_NoReplicas(t *testing.T) {
+	got := revisionReadyMessage(nil)
+	if !strings.Contains(got, "appear") {
+		t.Errorf("expected 'waiting for replicas to appear', got %q", got)
+	}
+}
+
+func TestRevisionReadyMessage_Partial(t *testing.T) {
+	replicas := []azurearm.Replica{replica("a", true), replica("b", true, false)}
+	got := revisionReadyMessage(replicas)
+	if !strings.Contains(got, "1/2") {
+		t.Errorf("expected 1/2 progress, got %q", got)
+	}
+}
+
+func TestRevisionReadyMessage_AllReady(t *testing.T) {
+	replicas := []azurearm.Replica{replica("a", true), replica("b", true)}
+	got := revisionReadyMessage(replicas)
+	if !strings.Contains(got, "2/2") {
+		t.Errorf("expected 2/2, got %q", got)
 	}
 }

@@ -24,6 +24,10 @@ func RollbackFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{Name: "to", Usage: "target revision (required with -y; otherwise an interactive picker is shown)"},
 		&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "skip the confirmation prompt"},
+		&cli.BoolFlag{Name: "wait", Usage: "after traffic shifts, wait until the target revision's replicas are Ready"},
+		&cli.DurationFlag{Name: "wait-timeout", Value: 5 * time.Minute, Usage: "max wait time (default: 5m)"},
+		&cli.BoolFlag{Name: "logs", Value: true, Usage: "stream logs from the first ready replica during --wait (--logs=false to disable)"},
+		&cli.BoolFlag{Name: "no-color", Usage: "disable ANSI colors in streamed logs (also honored via NO_COLOR env)"},
 	}
 }
 
@@ -45,7 +49,12 @@ func Rollback(ctx context.Context, c *cli.Command) error {
 	dir := c.String("dir")
 	to := c.String("to")
 	yes := c.Bool("yes")
-	slog.Debug("rollback: start", "env", env, "to", to, "yes", yes)
+	wait := c.Bool("wait")
+	waitTimeout := c.Duration("wait-timeout")
+	streamLogs := c.Bool("logs")
+	color := shouldColor(c.Bool("no-color"))
+	slog.Debug("rollback: start",
+		"env", env, "to", to, "yes", yes, "wait", wait, "logs", streamLogs)
 
 	manifest, _, err := lazurecfg.LoadManifest(lazurecfg.LoadOptions{ProjectDir: dir, Env: env})
 	if err != nil {
@@ -110,6 +119,14 @@ func Rollback(ctx context.Context, c *cli.Command) error {
 	slog.Info("rollback complete",
 		"app", name, "from", current, "to", to,
 		"duration", time.Since(start).Round(time.Second))
+
+	if wait {
+		if err := waitForRevisionReady(ctx, ca, sub, rg, name, to, waitTimeout, streamLogs, color); err != nil {
+			return errs.System(errs.Wrap(err, "rollback: --wait"))
+		}
+		slog.Info("rollback --wait complete — target revision's replicas Ready",
+			"app", name, "revision", to)
+	}
 	return nil
 }
 
