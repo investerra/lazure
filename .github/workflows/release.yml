@@ -1,16 +1,21 @@
 name: release
 
-# Triggered by semver tag pushes. Tags are usually cut via the
-# `tag-release` workflow (workflow_dispatch) which computes the next
-# semver + auto-generates a changelog, but manually-pushed v*.*.* tags
-# work identically.
+# Runs goreleaser to build and publish a release. Triggered by:
+#   - semver tag pushes (manual `git push origin v1.2.3`)
+#   - workflow_dispatch with a tag ref (called by tag-release.yml,
+#     because tags pushed by the default GITHUB_TOKEN don't trigger
+#     downstream workflows — an anti-recursion safety measure)
 on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "tag to release (e.g. v1.2.3)"
+        required: true
+        type: string
 
-# Needed for goreleaser-action to create the GitHub Release + upload
-# assets. No other privileges required.
 permissions:
   contents: write
 
@@ -21,8 +26,9 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
         with:
-          # Full history so goreleaser can read the commit graph for its
-          # changelog generator (based on git log between tags).
+          # When invoked via workflow_dispatch we must check out the
+          # tag ref rather than the default branch.
+          ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
 
       - name: Set up Go

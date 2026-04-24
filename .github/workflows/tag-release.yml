@@ -2,10 +2,9 @@ name: tag-release
 
 # Manually-triggered release cutter. Computes the next semver tag based
 # on the selected bump type, generates a changelog from the git log
-# since the previous tag, and pushes the tag. The push then triggers
-# release.yml which runs goreleaser and publishes assets.
-#
-# Use this from the Actions tab: "Run workflow" → pick bump type.
+# since the previous tag, pushes the tag, then dispatches release.yml
+# for that tag (the tag push itself wouldn't trigger release.yml
+# because the default GITHUB_TOKEN suppresses downstream workflows).
 
 on:
   workflow_dispatch:
@@ -22,6 +21,7 @@ on:
 
 permissions:
   contents: write
+  actions: write # needed to dispatch release.yml at the end
 
 jobs:
   tag:
@@ -30,8 +30,6 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
         with:
-          # Full history + tags so we can find the previous release and
-          # build a changelog against it.
           fetch-depth: 0
 
       - name: Compute next version
@@ -40,7 +38,6 @@ jobs:
           BUMP: ${{ inputs.bump }}
         run: |
           set -euo pipefail
-          # Newest existing semver tag, empty on first release.
           latest=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
           if [ -z "$latest" ]; then
             latest="v0.0.0"
@@ -65,7 +62,6 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$PREVIOUS" = "v0.0.0" ]; then
-            # First release — cap at 50 commits to keep the message readable.
             body=$(git log --pretty='- %s' -n 50 HEAD)
             total=$(git rev-list --count HEAD)
             if [ "$total" -gt 50 ]; then
@@ -93,8 +89,17 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # -m once for subject, -m again for body → annotated tag with
-          # a proper separation in `git show <tag>`.
           git tag -a "$NEW" -m "$NEW" -m "$BODY"
           git push origin "$NEW"
-          echo "Pushed $NEW — release.yml will now build and publish assets."
+          echo "Pushed $NEW."
+
+      - name: Dispatch release workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW: ${{ steps.version.outputs.new }}
+        run: |
+          set -euo pipefail
+          # Manual chain — a tag push from GITHUB_TOKEN won't trigger
+          # release.yml on its own, so we explicitly dispatch it.
+          gh workflow run release.yml --ref "$NEW" -f tag="$NEW"
+          echo "Dispatched release.yml for $NEW — goreleaser will build and publish."
