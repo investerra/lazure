@@ -74,7 +74,7 @@ func customStyles() *log.Styles {
 
 	// Keys that flag important context. Bold so they stand out in a wall of
 	// INFO lines; color-coded so you can scan for the dimension you care
-	// about (all env="prod" lines in red-orange, all revision="..."
+	// about (all env="prd" lines in red-orange, all revision="..."
 	// lines in green, etc.).
 	bold := lipgloss.NewStyle().Bold(true)
 	emphasis := func(fg lipgloss.Color) lipgloss.Style {
@@ -87,7 +87,7 @@ func customStyles() *log.Styles {
 	s.Keys["container"] = emphasis(lipgloss.Color("87"))
 	s.Values["container"] = bold
 
-	// Yellow/orange — environment (prod draws the eye)
+	// Yellow/orange — environment (prd draws the eye)
 	s.Keys["env"] = emphasis(lipgloss.Color("214"))
 	s.Values["env"] = bold
 

@@ -75,7 +75,7 @@ func SecretsCommand() *cli.Command {
 // envArgs is the positional `env` argument used by every secrets subcommand.
 func envArgs() []cli.Argument {
 	return []cli.Argument{
-		&cli.StringArg{Name: "env", UsageText: "target environment (dev|uat|prod|...)"},
+		&cli.StringArg{Name: "env", UsageText: "target environment (dev|uat|prd|...)"},
 	}
 }
 

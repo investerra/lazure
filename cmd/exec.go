@@ -38,7 +38,7 @@ func ExecFlags() []cli.Flag {
 // rejects any tail args with "args cmd has max 0, not parsing argument".
 func ExecArgs() []cli.Argument {
 	return []cli.Argument{
-		&cli.StringArg{Name: "env", UsageText: "target environment (dev|uat|prod|...)"},
+		&cli.StringArg{Name: "env", UsageText: "target environment (dev|uat|prd|...)"},
 		&cli.StringArgs{
 			Name:      "cmd",
 			UsageText: "command to run (prefix with -- to pass flags like -la)",

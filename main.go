@@ -160,7 +160,7 @@ func newApp() *cli.Command {
 
 func envArg() []cli.Argument {
 	return []cli.Argument{
-		&cli.StringArg{Name: "env", UsageText: "target environment (dev|uat|prod|...)"},
+		&cli.StringArg{Name: "env", UsageText: "target environment (dev|uat|prd|...)"},
 	}
 }
 

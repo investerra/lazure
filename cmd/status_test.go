@@ -68,7 +68,7 @@ func TestPrintStatusTable_NoIngress(t *testing.T) {
 			Template:           azurearm.Template{Scale: &azurearm.Scale{MinReplicas: 1, MaxReplicas: 1}},
 		},
 	}
-	out, err := captureStdout(t, func() error { return printStatusTable("prod", app) })
+	out, err := captureStdout(t, func() error { return printStatusTable("prd", app) })
 	if err != nil {
 		t.Fatal(err)
 	}

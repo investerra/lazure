@@ -145,13 +145,13 @@ func TestDiscoverEnvs_BasicGlob(t *testing.T) {
 	dir := t.TempDir()
 	envsDir := filepath.Join(dir, "envs")
 	_ = os.Mkdir(envsDir, 0o755)
-	for _, f := range []string{"dev.vars.yml", "uat.vars.yml", "prod.vars.yml"} {
+	for _, f := range []string{"dev.vars.yml", "uat.vars.yml", "prd.vars.yml"} {
 		if err := os.WriteFile(filepath.Join(envsDir, f), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
 	got := discoverEnvs(dir)
-	want := []string{"dev", "prod", "uat"} // sorted
+	want := []string{"dev", "prd", "uat"} // sorted
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("got %v, want %v", got, want)
 	}
