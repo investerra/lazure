@@ -39,13 +39,15 @@ func SecretsCommand() *cli.Command {
 					&cli.BoolFlag{Name: "reveal", Usage: "show full secret values (default: redacted)"},
 					&cli.StringFlag{Name: "format", Usage: "output format: table|json", Value: "table"},
 				},
-				Action: SecretsView,
+				Action:        SecretsView,
+				ShellComplete: CompleteEnvs,
 			},
 			{
-				Name:      "edit",
-				Usage:     "decrypt, open in $EDITOR, re-encrypt",
-				Arguments: envArgs(),
-				Action:    SecretsEdit,
+				Name:          "edit",
+				Usage:         "decrypt, open in $EDITOR, re-encrypt",
+				Arguments:     envArgs(),
+				Action:        SecretsEdit,
+				ShellComplete: CompleteEnvs,
 			},
 			{
 				Name:      "verify",
@@ -54,7 +56,8 @@ func SecretsCommand() *cli.Command {
 				Flags: []cli.Flag{
 					&cli.BoolFlag{Name: "check-kv", Usage: "also verify each referenced secret exists in Key Vault"},
 				},
-				Action: SecretsVerify,
+				Action:        SecretsVerify,
+				ShellComplete: CompleteEnvs,
 			},
 			{
 				Name:      "sync",
@@ -65,7 +68,8 @@ func SecretsCommand() *cli.Command {
 					&cli.IntFlag{Name: "concurrency", Usage: "parallel HTTP calls", Value: 10},
 					&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "skip the confirmation prompt"},
 				},
-				Action: SecretsSync,
+				Action:        SecretsSync,
+				ShellComplete: CompleteEnvs,
 			},
 		},
 	}
