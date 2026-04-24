@@ -14,8 +14,11 @@ func TestSetup_LevelParsing(t *testing.T) {
 		{"debug", false},
 		{"info", false},
 		{"warn", false},
-		{"warning", false},
+		{"warning", false}, // lazure-specific alias → warn
 		{"error", false},
+		{"DEBUG", false}, // slog.Level.UnmarshalText is case-insensitive
+		{"debug+1", false},
+		{"error-2", false},
 		{"", false}, // empty defaults to info
 		{"bogus", true},
 	}
@@ -55,7 +58,6 @@ func TestSetup_FormatParsing(t *testing.T) {
 // refactoring Setup to accept an io.Writer, but we can verify the handler
 // was swapped.
 func TestSetup_InstallsDefault(t *testing.T) {
-	// Capture original default so we can restore it for test isolation.
 	orig := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(orig) })
 
@@ -66,20 +68,7 @@ func TestSetup_InstallsDefault(t *testing.T) {
 		t.Error("Setup did not replace slog.Default()")
 	}
 
-	// Calling a handler at debug level with a custom handler shouldn't panic.
 	slog.Debug("hello", "app", "test", "env", "unit")
-}
-
-// TestCustomStyles verifies the key-styling map is populated for the keys
-// we care about. We don't inspect the style output (that would lock us to
-// lipgloss internals) — just that SetStyles is covering the expected keys.
-func TestCustomStyles(t *testing.T) {
-	s := customStyles()
-	for _, k := range []string{"app", "env", "revision", "secret", "error", "err", "container", "dur", "duration"} {
-		if _, has := s.Keys[k]; !has {
-			t.Errorf("customStyles missing key %q", k)
-		}
-	}
 }
 
 func TestParseLevel_Error(t *testing.T) {
@@ -89,5 +78,63 @@ func TestParseLevel_Error(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "debug|info|warn|error") {
 		t.Errorf("error should list valid values, got %q", err.Error())
+	}
+}
+
+func TestParseLevel_LazureAliases(t *testing.T) {
+	// Non-stdlib inputs our parseLevel handles specially:
+	//   ""        → info   (not an error — common default flow)
+	//   "warning" → warn   (user-friendly synonym)
+	cases := map[string]slog.Level{
+		"":        slog.LevelInfo,
+		"warning": slog.LevelWarn,
+	}
+	for in, want := range cases {
+		got, err := parseLevel(in)
+		if err != nil {
+			t.Errorf("parseLevel(%q) err = %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("parseLevel(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+// TestReplaceAttr_KnownKeysColorized walks the lazure well-known keys
+// through replaceAttr and checks the returned attr isn't the input
+// pointer — indicating tint.Attr wrapped it. We don't inspect the
+// actual ANSI wrapping because tint's internal attr shape is an impl
+// detail; the guarantee we care about is "these keys are colored."
+func TestReplaceAttr_KnownKeysColorized(t *testing.T) {
+	keys := []string{"app", "container", "env", "revision", "secret", "error", "err", "dur", "duration"}
+	for _, k := range keys {
+		in := slog.String(k, "x")
+		out := replaceAttr(nil, in)
+		// tint.Attr returns an Any-kind attr holding a tintAttr struct;
+		// an unchanged return would keep Kind == KindString, so a Kind
+		// change signals wrapping happened.
+		if out.Value.Kind() == slog.KindString && out.Value.String() == "x" {
+			t.Errorf("key %q passed through unchanged — expected color wrapping", k)
+		}
+	}
+}
+
+func TestReplaceAttr_UnknownKeyPassesThrough(t *testing.T) {
+	in := slog.String("unknown_key", "value")
+	out := replaceAttr(nil, in)
+	if out.Value.Kind() != slog.KindString || out.Value.String() != "value" {
+		t.Errorf("unknown keys should pass unchanged, got %+v", out)
+	}
+}
+
+func TestReplaceAttr_NestedGroupPassesThrough(t *testing.T) {
+	// tint still invokes ReplaceAttr on attrs inside groups; we
+	// specifically don't color those because group semantics aren't
+	// stable in lazure's logging style.
+	in := slog.String("env", "prd")
+	out := replaceAttr([]string{"nested"}, in)
+	if out.Value.Kind() != slog.KindString || out.Value.String() != "prd" {
+		t.Errorf("grouped attrs should pass unchanged, got %+v", out)
 	}
 }

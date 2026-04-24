@@ -7,9 +7,10 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1
 	github.com/Masterminds/sprig/v3 v3.3.0
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/charmbracelet/log v1.0.0
 	github.com/getsops/sops/v3 v3.12.2
 	github.com/imroc/req/v3 v3.57.0
+	github.com/lmittmann/tint v1.1.3
+	github.com/muesli/termenv v0.16.0
 	github.com/pkg/errors v0.9.1
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2
 	github.com/urfave/cli/v3 v3.8.0
@@ -81,7 +82,6 @@ require (
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/getsops/gopgagent v0.0.0-20241224165529-7044f28e491e // indirect
 	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
-	github.com/go-logfmt/logfmt v0.6.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/goccy/go-yaml v1.9.8 // indirect
@@ -122,7 +122,6 @@ require (
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421 // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
-	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
