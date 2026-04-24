@@ -3,6 +3,8 @@ package lazurecfg
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/invopop/jsonschema"
 )
 
 // EnvValue is a polymorphic environment-variable value: either a plain string
@@ -69,6 +71,36 @@ func (e *EnvValue) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("envvalue: expected string or {secret: <name>}, got %s", string(data))
 	}
 }
+
+// JSONSchema returns the schema hint invopop/jsonschema honors when
+// generating the manifest schema. The struct's Go shape would emit a
+// plain object with optional `value` + `secret` keys — misleading,
+// since our UnmarshalJSON only accepts either a string or an object
+// of exactly {secret: <name>}. This hook describes the real shape.
+func (EnvValue) JSONSchema() *jsonschema.Schema {
+	secretObj := &jsonschema.Schema{
+		Type:                 "object",
+		Description:          "reference to a secret by name (resolves via SOPS + Key Vault)",
+		Properties:           jsonschema.NewProperties(),
+		Required:             []string{"secret"},
+		AdditionalProperties: jsonschema.FalseSchema,
+	}
+	secretObj.Properties.Set("secret", &jsonschema.Schema{
+		Type:      "string",
+		MinLength: ptrUint64(1),
+	})
+	return &jsonschema.Schema{
+		OneOf: []*jsonschema.Schema{
+			{Type: "string", Description: "plain-text value"},
+			secretObj,
+		},
+	}
+}
+
+// ptrUint64 is a one-liner for &x-style uint64 pointers in schema
+// literals. invopop's Schema uses pointers so zero-value fields stay
+// omitted from the generated output.
+func ptrUint64(v uint64) *uint64 { return &v }
 
 func firstNonSpace(data []byte) byte {
 	for _, b := range data {

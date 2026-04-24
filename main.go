@@ -176,6 +176,12 @@ func newApp() *cli.Command {
 				Flags:  cmd.InitFlags(),
 				Action: cmd.Init,
 			},
+			{
+				Name:      "schema",
+				Usage:     "write the embedded JSON Schema for deploy.yml to disk or stdout",
+				Arguments: cmd.SchemaArgs(),
+				Action:    cmd.Schema,
+			},
 
 			// Config surface
 			cmd.SecretsCommand(),

@@ -84,9 +84,10 @@ func TestRenderDeployYml_ContainsValues(t *testing.T) {
 	got := renderDeployYml(cfg)
 	for _, want := range []string{
 		"name: api-server", "location: switzerlandnorth",
-		"# ingress:",      // commented-in example
-		"# scale:",        // same
-		"containers:",     // uncommented
+		"$schema=./deploy.schema.json", // modeline uses local path
+		"# ingress:",                   // commented-in example
+		"# scale:",                     // same
+		"containers:",                  // uncommented
 		"{{ .Vars.docker_image }}",
 	} {
 		if !strings.Contains(got, want) {
@@ -291,6 +292,7 @@ func TestScaffoldProject_CreatesExpectedFiles(t *testing.T) {
 
 	expect := []string{
 		"deploy.yml",
+		"deploy.schema.json", // schema sits beside deploy.yml for modeline resolution
 		"envs/dev.vars.yml",
 		"envs/uat.vars.yml",
 		"envs/prd.vars.yml",

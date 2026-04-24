@@ -1,0 +1,597 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/investerra/lazure/internal/lazurecfg/manifest",
+  "$ref": "#/$defs/Manifest",
+  "$defs": {
+    "App": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "location": {
+          "type": "string"
+        },
+        "resource_group": {
+          "type": "string"
+        },
+        "managed_environment_id": {
+          "type": "string"
+        },
+        "identity": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "location",
+        "resource_group",
+        "managed_environment_id",
+        "identity"
+      ]
+    },
+    "AzureQueueScaler": {
+      "properties": {
+        "queue_name": {
+          "type": "string"
+        },
+        "queue_length": {
+          "type": "integer"
+        },
+        "account_name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "queue_name",
+        "queue_length",
+        "account_name"
+      ]
+    },
+    "Container": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "working_dir": {
+          "type": "string"
+        },
+        "resources": {
+          "$ref": "#/$defs/Resources"
+        },
+        "env": {
+          "additionalProperties": {
+            "$ref": "#/$defs/EnvValue"
+          },
+          "type": "object"
+        },
+        "merge_env": {
+          "additionalProperties": {
+            "$ref": "#/$defs/EnvValue"
+          },
+          "type": "object"
+        },
+        "volume_mounts": {
+          "items": {
+            "$ref": "#/$defs/VolumeMount"
+          },
+          "type": "array"
+        },
+        "probes": {
+          "$ref": "#/$defs/Probes"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
+    "Cors": {
+      "properties": {
+        "allowed_origins": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowed_methods": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowed_headers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "expose_headers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allow_credentials": {
+          "type": "boolean"
+        },
+        "max_age": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "CustomScaler": {
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type"
+      ]
+    },
+    "EnvValue": {
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "plain-text value"
+        },
+        {
+          "properties": {
+            "secret": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "secret"
+          ],
+          "description": "reference to a secret by name (resolves via SOPS + Key Vault)"
+        }
+      ]
+    },
+    "HTTPProbe": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "scheme": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path",
+        "port"
+      ]
+    },
+    "HTTPScaler": {
+      "properties": {
+        "concurrent_requests": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "concurrent_requests"
+      ]
+    },
+    "IPRestriction": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "cidr": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "cidr",
+        "action"
+      ]
+    },
+    "Ingress": {
+      "properties": {
+        "external": {
+          "type": "boolean"
+        },
+        "target_port": {
+          "type": "integer"
+        },
+        "transport": {
+          "type": "string"
+        },
+        "allow_insecure": {
+          "type": "boolean"
+        },
+        "cors": {
+          "$ref": "#/$defs/Cors"
+        },
+        "ip_restrictions": {
+          "items": {
+            "$ref": "#/$defs/IPRestriction"
+          },
+          "type": "array"
+        },
+        "traffic": {
+          "$ref": "#/$defs/Traffic"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "external",
+        "target_port"
+      ]
+    },
+    "Manifest": {
+      "properties": {
+        "app": {
+          "$ref": "#/$defs/App"
+        },
+        "ingress": {
+          "$ref": "#/$defs/Ingress"
+        },
+        "registries": {
+          "items": {
+            "$ref": "#/$defs/Registry"
+          },
+          "type": "array"
+        },
+        "scale": {
+          "$ref": "#/$defs/Scale"
+        },
+        "volumes": {
+          "items": {
+            "$ref": "#/$defs/Volume"
+          },
+          "type": "array"
+        },
+        "env": {
+          "additionalProperties": {
+            "$ref": "#/$defs/EnvValue"
+          },
+          "type": "object"
+        },
+        "init_containers": {
+          "items": {
+            "$ref": "#/$defs/Container"
+          },
+          "type": "array"
+        },
+        "containers": {
+          "items": {
+            "$ref": "#/$defs/Container"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "app",
+        "containers"
+      ]
+    },
+    "MetricScaler": {
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "value": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "value"
+      ]
+    },
+    "Probe": {
+      "properties": {
+        "http": {
+          "$ref": "#/$defs/HTTPProbe"
+        },
+        "tcp": {
+          "$ref": "#/$defs/TCPProbe"
+        },
+        "initial_delay": {
+          "type": "integer"
+        },
+        "period": {
+          "type": "integer"
+        },
+        "timeout": {
+          "type": "integer"
+        },
+        "failure_threshold": {
+          "type": "integer"
+        },
+        "success_threshold": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Probes": {
+      "properties": {
+        "liveness": {
+          "$ref": "#/$defs/Probe"
+        },
+        "readiness": {
+          "$ref": "#/$defs/Probe"
+        },
+        "startup": {
+          "$ref": "#/$defs/Probe"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Registry": {
+      "properties": {
+        "server": {
+          "type": "string"
+        },
+        "identity": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        },
+        "password_secret": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "server"
+      ]
+    },
+    "Resources": {
+      "properties": {
+        "cpu": {
+          "type": "number"
+        },
+        "memory": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "cpu",
+        "memory"
+      ]
+    },
+    "RuleAuth": {
+      "properties": {
+        "identity": {
+          "type": "string"
+        },
+        "secrets": {
+          "items": {
+            "$ref": "#/$defs/RuleSecretAuth"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "RuleSecretAuth": {
+      "properties": {
+        "param": {
+          "type": "string"
+        },
+        "secret": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "param",
+        "secret"
+      ]
+    },
+    "Scale": {
+      "properties": {
+        "min": {
+          "type": "integer"
+        },
+        "max": {
+          "type": "integer"
+        },
+        "cooldown_period": {
+          "type": "integer"
+        },
+        "polling_interval": {
+          "type": "integer"
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/ScaleRule"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ScaleRule": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "http": {
+          "$ref": "#/$defs/HTTPScaler"
+        },
+        "tcp": {
+          "$ref": "#/$defs/TCPScaler"
+        },
+        "cpu": {
+          "$ref": "#/$defs/MetricScaler"
+        },
+        "memory": {
+          "$ref": "#/$defs/MetricScaler"
+        },
+        "azure_queue": {
+          "$ref": "#/$defs/AzureQueueScaler"
+        },
+        "custom": {
+          "$ref": "#/$defs/CustomScaler"
+        },
+        "auth": {
+          "$ref": "#/$defs/RuleAuth"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
+    "TCPProbe": {
+      "properties": {
+        "port": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "port"
+      ]
+    },
+    "TCPScaler": {
+      "properties": {
+        "concurrent_connections": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "concurrent_connections"
+      ]
+    },
+    "Traffic": {
+      "properties": {
+        "latest": {
+          "$ref": "#/$defs/TrafficEntry"
+        },
+        "previous": {
+          "$ref": "#/$defs/TrafficEntry"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "TrafficEntry": {
+      "properties": {
+        "weight": {
+          "type": "integer"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "weight"
+      ]
+    },
+    "Volume": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "storage_name": {
+          "type": "string"
+        },
+        "mount_options": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "type"
+      ]
+    },
+    "VolumeMount": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sub_path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "path"
+      ]
+    }
+  }
+}

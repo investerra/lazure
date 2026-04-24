@@ -15,6 +15,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/investerra/lazure/internal/errs"
+	"github.com/investerra/lazure/internal/schema"
 )
 
 // InitFlags are the flags for `lazure init`.
@@ -196,6 +197,12 @@ func scaffoldProject(dir string, cfg initConfig, inf projectInferences) error {
 	if err := os.WriteFile(filepath.Join(dir, "deploy.yml"), []byte(renderDeployYml(cfg)), 0o644); err != nil {
 		return err
 	}
+	// Ship the JSON Schema next to deploy.yml so the modeline's
+	// `$schema=./deploy.schema.json` resolves without network access.
+	// Users regenerate after a lazure upgrade via `lazure schema`.
+	if err := os.WriteFile(filepath.Join(dir, "deploy.schema.json"), schemaWithNewline(), 0o644); err != nil {
+		return err
+	}
 	for _, env := range cfg.Envs {
 		varsPath := filepath.Join(envsDir, env+".vars.yml")
 		body := renderVarsYml(env, cfg, inf.byEnv[env], inf.gitOrg)
@@ -212,12 +219,17 @@ func scaffoldProject(dir string, cfg initConfig, inf projectInferences) error {
 	return os.WriteFile(plainPath, []byte(renderSecretsPlain(firstEnv)), 0o600)
 }
 
+// schemaWithNewline returns the embedded schema bytes with a trailing
+// newline. Centralized so both `init` and `lazure schema` produce
+// byte-identical files (matters for CI drift checks).
+func schemaWithNewline() []byte { return withTrailingNewline(schema.JSON) }
+
 // renderDeployYml returns the manifest skeleton. Values from cfg are
 // inlined; everything else is commented examples so users uncomment
 // features as they adopt them instead of starting from a maximal
 // config they then have to whittle down.
 func renderDeployYml(cfg initConfig) string {
-	return fmt.Sprintf(`# yaml-language-server: $schema=https://raw.githubusercontent.com/investerra/lazure/main/schemas/lazure.schema.json
+	return fmt.Sprintf(`# yaml-language-server: $schema=./deploy.schema.json
 app:
   name: %s
   location: %s
