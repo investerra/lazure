@@ -1,0 +1,73 @@
+version: 2
+
+project_name: lazure
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod verify
+
+builds:
+  - id: lazure
+    main: .
+    binary: lazure
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    # -s -w strips debug info (~30% smaller binary); main.Version is
+    # read at runtime by `lazure --version` and self-update comparisons.
+    ldflags:
+      - -s -w
+      - -X main.Version={{ .Version }}
+      - -X main.Commit={{ .ShortCommit }}
+      - -X main.Date={{ .Date }}
+    # Reproducible builds: fix mtime to the commit timestamp so two
+    # builds of the same tag produce byte-identical artifacts.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  use: git
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^feat(\(.+?\))?:'
+      order: 0
+    - title: Bug fixes
+      regexp: '^fix(\(.+?\))?:'
+      order: 1
+    - title: Other
+      order: 99
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore:"
+      - "^test:"
+      - "^ci:"
+      - "^style:"
+
+release:
+  # Draft releases let a human eyeball the notes before announcing.
+  # Flip to false once the workflow proves stable.
+  draft: true
+  name_template: "{{ .Tag }}"
