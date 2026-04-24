@@ -1,0 +1,88 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only — CI validates, it doesn't publish.
+permissions:
+  contents: read
+
+jobs:
+  # Matrix test: Linux + macOS, amd64 + arm64. Race detector on both.
+  # darwin-amd64 is increasingly rare in practice, but goreleaser ships
+  # all four so CI catches arch-specific issues before they land in a
+  # release.
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race -timeout 5m ./...
+
+  # Static analysis beyond what `go vet` catches. golangci-lint is the
+  # community-standard umbrella over staticcheck, revive, errcheck, etc.
+  # Pinned to a stable release so upgrading the lint ruleset is an
+  # explicit decision, not a silent CI break.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout 5m
+
+  # Validates .goreleaser.yml stays correct. Cheaper than a full
+  # snapshot build, and catches config regressions the moment someone
+  # edits the release pipeline.
+  goreleaser-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: GoReleaser check
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: check
