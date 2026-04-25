@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/urfave/cli/v3"
 
@@ -13,8 +14,36 @@ import (
 	"github.com/investerra/lazure/internal/logging"
 )
 
-// Version is injected at build time via -ldflags "-X main.Version=...".
-var Version = "dev"
+// Build-time injection via -ldflags "-X main.Version=... -X main.Commit=... -X main.Date=...".
+// Commit + Date are stamped by goreleaser; running `go build` without
+// ldflags leaves them empty and the version line falls back to just
+// "dev".
+var (
+	Version = "dev"
+	Commit  = ""
+	Date    = ""
+)
+
+// versionString is what `lazure --version` prints. Includes commit +
+// date when stamped (release builds), bare version otherwise (go build
+// during development).
+func versionString() string {
+	if Commit == "" && Date == "" {
+		return Version
+	}
+	parts := []string{Version}
+	if Commit != "" {
+		short := Commit
+		if len(short) > 7 {
+			short = short[:7]
+		}
+		parts = append(parts, fmt.Sprintf("commit %s", short))
+	}
+	if Date != "" {
+		parts = append(parts, Date)
+	}
+	return fmt.Sprintf("%s (%s)", parts[0], strings.Join(parts[1:], ", "))
+}
 
 func main() {
 	// Register this package's build-time Version with the selfupdate
@@ -43,13 +72,25 @@ func newApp() *cli.Command {
 	return &cli.Command{
 		Name:    "lazure",
 		Usage:   "Deploy and manage Azure Container Apps",
-		Version: Version,
+		Version: versionString(),
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:     "log-level",
 				Usage:    "log verbosity: debug|info|warn|error",
 				Value:    "info",
 				Sources:  cli.EnvVars("LAZURE_LOG_LEVEL"),
+				Category: "Global",
+			},
+			&cli.BoolFlag{
+				Name:     "verbose",
+				Aliases:  []string{"v"},
+				Usage:    "shortcut for --log-level=debug",
+				Category: "Global",
+			},
+			&cli.BoolFlag{
+				Name:     "quiet",
+				Aliases:  []string{"q"},
+				Usage:    "shortcut for --log-level=warn (errors and warnings only)",
 				Category: "Global",
 			},
 			&cli.StringFlag{
@@ -67,8 +108,16 @@ func newApp() *cli.Command {
 				Category: "Global",
 			},
 		},
-		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
-			if err := logging.Setup(cmd.String("log-level"), cmd.String("log-format")); err != nil {
+		Before: func(ctx context.Context, c *cli.Command) (context.Context, error) {
+			// Resolve verbosity from -v/-q shortcuts before falling back
+			// to --log-level. -v wins over -q if both somehow slip in.
+			level := c.String("log-level")
+			if c.Bool("verbose") {
+				level = "debug"
+			} else if c.Bool("quiet") {
+				level = "warn"
+			}
+			if err := logging.Setup(level, c.String("log-format")); err != nil {
 				return ctx, err
 			}
 			return ctx, nil
@@ -82,6 +131,11 @@ func newApp() *cli.Command {
 				Flags:         cmd.DeployFlags(),
 				Action:        cmd.Deploy,
 				ShellComplete: cmd.CompleteEnvs,
+				Description: `Examples:
+  lazure deploy dev                       interactive, with confirm
+  lazure deploy dev -y                    non-interactive (CI)
+  lazure deploy dev --wait --logs         block until live + tail logs
+  lazure deploy dev --print               preview ARM payload first`,
 			},
 			{
 				Name:          "render",
@@ -89,6 +143,10 @@ func newApp() *cli.Command {
 				Arguments:     envArg(),
 				Action:        cmd.Render,
 				ShellComplete: cmd.CompleteEnvs,
+				Description: `Examples:
+  lazure render dev                       to stdout
+  lazure render dev > rendered.yml        capture to file
+  lazure render dev | yq '.properties'    inspect a section`,
 			},
 			{
 				Name:          "diff",
@@ -97,18 +155,32 @@ func newApp() *cli.Command {
 				Flags:         cmd.DiffFlags(),
 				Action:        cmd.Diff,
 				ShellComplete: cmd.CompleteEnvs,
+				Description: `Examples:
+  lazure diff dev                         colorized unified diff
+  lazure diff dev --no-color              plain output (CI / piping)
+  lazure diff dev --format=json           machine-readable
+
+Exits 0 if no drift, 1 if drift detected.`,
 			},
 			{
 				Name:   "release",
 				Usage:  "cut a calver tag and push",
 				Flags:  cmd.ReleaseFlags(),
 				Action: cmd.Release,
+				Description: `Examples:
+  lazure release                          interactive (preview + confirm)
+  lazure release -y                       non-interactive
+  lazure release --wait                   tail GH Actions until done
+  lazure release --dry-run                show plan, exit without push`,
 			},
 			{
 				Name:   "self-update",
 				Usage:  "update the lazure binary from GitHub releases",
 				Flags:  cmd.SelfUpdateFlags(),
 				Action: cmd.SelfUpdate,
+				Description: `Examples:
+  lazure self-update --check              report only (exit 1 if newer available)
+  lazure self-update                      download + atomic replace`,
 			},
 
 			// Ops / day-two
@@ -127,6 +199,12 @@ func newApp() *cli.Command {
 				Flags:         cmd.LogsFlags(),
 				Action:        cmd.Logs,
 				ShellComplete: cmd.CompleteEnvs,
+				Description: `Examples:
+  lazure logs dev                         last 20 lines, exit
+  lazure logs dev --follow                tail live (Ctrl-C to stop)
+  lazure logs dev --tail=100              more history before exit
+  lazure logs dev --container=tasks       pick a non-default container
+  lazure logs dev --raw                   no JSON parsing / coloring`,
 			},
 			{
 				Name:          "revisions",
@@ -143,6 +221,10 @@ func newApp() *cli.Command {
 				Flags:         cmd.RollbackFlags(),
 				Action:        cmd.Rollback,
 				ShellComplete: cmd.CompleteEnvs,
+				Description: `Examples:
+  lazure rollback dev                     interactive picker
+  lazure rollback dev --to <rev> -y       non-interactive (CI)
+  lazure rollback dev --to <rev> --wait   wait for new replicas`,
 			},
 			{
 				Name:          "restart",
@@ -151,6 +233,11 @@ func newApp() *cli.Command {
 				Flags:         cmd.RestartFlags(),
 				Action:        cmd.Restart,
 				ShellComplete: cmd.CompleteEnvs,
+				Description: `Examples:
+  lazure restart dev                      restart current revision
+  lazure restart dev --revision <rev>     restart a specific one
+  lazure restart dev --wait               block until replicas Ready
+  lazure restart dev --wait --no-logs     wait but don't tail logs`,
 			},
 			{
 				Name:          "exec",
@@ -159,6 +246,11 @@ func newApp() *cli.Command {
 				Flags:         cmd.ExecFlags(),
 				Action:        cmd.Exec,
 				ShellComplete: cmd.CompleteEnvs,
+				Description: `Examples:
+  lazure exec dev                         interactive sh in default container
+  lazure exec dev --container tasks       pick a non-default container
+  lazure exec dev -- ls -la /srv          one-shot command (note the --)
+  lazure exec dev -- env | grep DB        chain shell ops via az`,
 			},
 			{
 				Name:   "doctor",
@@ -173,12 +265,20 @@ func newApp() *cli.Command {
 				Usage:  "scaffold a new lazure project in the current directory",
 				Flags:  cmd.InitFlags(),
 				Action: cmd.Init,
+				Description: `Examples:
+  lazure init                             interactive (prompts for name etc.)
+  lazure init --quiet --name api --resource-group dbx
+  lazure init --force                     overwrite an existing deploy.yml`,
 			},
 			{
 				Name:      "schema",
 				Usage:     "write the embedded JSON Schema for deploy.yml to disk or stdout",
 				Arguments: cmd.SchemaArgs(),
 				Action:    cmd.Schema,
+				Description: `Examples:
+  lazure schema                           write to <dir>/deploy.schema.json
+  lazure schema -                         write to stdout (pipe to jq etc.)
+  lazure schema /tmp/lazure.json          write to a specific path`,
 			},
 
 			// Config surface
