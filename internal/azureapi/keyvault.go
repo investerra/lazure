@@ -88,7 +88,12 @@ func (c *KeyVaultClient) PutSecret(ctx context.Context, name, value string) erro
 	}
 	slog.Debug("keyvault: PUT secret response", "name", name, "status", resp.StatusCode)
 	if !resp.IsSuccessState() {
-		return errs.Errorf("keyvault: put secret %q: %s %s", name, resp.Status, resp.String())
+		// Azure validation errors can echo the offending value back in
+		// the response body ("supplied value contained …"). Don't
+		// include resp.String() here — it would leak the secret value
+		// into slog.Error and any log aggregator. Status code is
+		// enough for ops; details remain in debug-level slog above.
+		return errs.Errorf("keyvault: put secret %q: %s", name, resp.Status)
 	}
 	return nil
 }

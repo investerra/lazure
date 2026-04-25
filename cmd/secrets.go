@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -194,13 +195,24 @@ func SecretsEdit(ctx context.Context, c *cli.Command) error {
 	}
 	origHash := sha256.Sum256(plainContent)
 
-	// Open $EDITOR.
-	editor := os.Getenv("EDITOR")
+	// Open the user's editor. POSIX precedence is $VISUAL → $EDITOR
+	// (interactive editors typically prefer VISUAL); fall back to
+	// EDITOR for environments that only set the older variable.
+	editor := os.Getenv("VISUAL")
 	if editor == "" {
-		return errs.System(errs.New("$EDITOR not set; run e.g. 'export EDITOR=vim' and retry"))
+		editor = os.Getenv("EDITOR")
+	}
+	if editor == "" {
+		return errs.System(errs.New("neither $VISUAL nor $EDITOR is set; run e.g. 'export EDITOR=vim' and retry"))
 	}
 	slog.Info("opening editor", "editor", editor, "path", plainPath)
-	edit := exec.CommandContext(ctx, editor, plainPath)
+	// exec.Command (NOT CommandContext) on purpose: SIGINT to lazure
+	// would otherwise propagate as ctx.Done → SIGKILL to the editor,
+	// destroying any unsaved buffer the user is mid-edit on. With
+	// plain Command the editor receives SIGINT directly via the
+	// terminal's foreground process group and decides itself how to
+	// handle it (vim/nano/emacs all handle this gracefully).
+	edit := exec.Command(editor, plainPath)
 	edit.Stdin, edit.Stdout, edit.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := edit.Run(); err != nil {
 		return errs.System(errs.Wrapf(err, "secrets edit: $EDITOR exited with error"))
@@ -231,26 +243,28 @@ func SecretsEdit(ctx context.Context, c *cli.Command) error {
 }
 
 // marshalPlainSecrets writes a deterministic YAML representation of the
-// decrypted map — alphabetical keys, double-quoted values — so diffs
+// decrypted map — alphabetical keys, JSON-escaped values — so diffs
 // across edits are minimal.
+//
+// Values are emitted via encoding/json which guarantees single-line,
+// double-quoted output with proper \n / \" / \uXXXX escapes. JSON
+// strings are a strict subset of YAML double-quoted strings, so the
+// output round-trips through any YAML parser. This avoids
+// sigs.k8s.io/yaml's habit of switching to multi-line block scalars
+// for values containing newlines — which broke the `key: <inline>`
+// shape used here and silently produced invalid YAML on re-decrypt.
 func marshalPlainSecrets(secrets map[string]string) ([]byte, error) {
 	keys := sortedKeys(secrets)
-	ordered := map[string]string{}
-	_ = ordered // sigs.k8s.io/yaml doesn't preserve insertion order
-	// Emit manually for deterministic order + explicit quoting.
 	var buf strings.Builder
 	buf.WriteString("# Decrypted secrets — DO NOT COMMIT. Delete this file when done editing.\n")
 	for _, k := range keys {
-		// sigs.k8s.io/yaml.Marshal on a single string produces the
-		// correctly-quoted form (handles newlines, special chars, etc.).
-		quoted, err := yaml.Marshal(secrets[k])
+		v, err := json.Marshal(secrets[k])
 		if err != nil {
 			return nil, err
 		}
-		q := strings.TrimRight(string(quoted), "\n")
 		buf.WriteString(k)
 		buf.WriteString(": ")
-		buf.WriteString(q)
+		buf.Write(v)
 		buf.WriteString("\n")
 	}
 	return []byte(buf.String()), nil

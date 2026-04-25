@@ -136,11 +136,19 @@ func renderTemplate(path string, vars map[string]any) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// funcMap returns the template function set: sprig (~150 fns) overlaid with
-// Helm-style `required`. Registration order — sprig first, then required —
-// ensures our overlay wins any future sprig collision.
+// funcMap returns the template function set: sprig's HERMETIC funcmap
+// (~140 fns minus environment-reading ones) overlaid with Helm-style
+// `required`. Registration order — sprig first, then required — ensures
+// our overlay wins any future sprig collision.
+//
+// Hermetic vs full: HermeticTxtFuncMap omits `env`, `expandenv`,
+// `getHostByName`, etc. Without that filter, anyone who can write a
+// deploy.yml or vars.yml can do `image: "{{ env "GITHUB_TOKEN" }}.x"`
+// and exfiltrate process-level secrets via `lazure render` or by
+// having them baked into the rendered ARM payload sent to Azure.
+// This is the same hardening Helm 3 applied for the same threat.
 func funcMap() template.FuncMap {
-	fm := sprig.FuncMap()
+	fm := sprig.HermeticTxtFuncMap()
 	fm["required"] = requiredFunc
 	return fm
 }

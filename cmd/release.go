@@ -224,6 +224,13 @@ func countCommits(ctx context.Context, revspec string) (int, error) {
 // body. First-release runs hit the cap logic; normal runs just
 // trim and return. Empty log output becomes "(no changes)" so the tag
 // body is never blank.
+//
+// Slicing-bounds note: `totalCommits` comes from rev-list and may be
+// larger than the number of `lines` we actually have (shallow clones,
+// or git log truncating for any reason). Always cap the slice at
+// len(lines) so the indexing stays in-bounds — falling back to
+// "include everything we got" is preferable to a panic at release
+// time.
 func formatChangelog(logOutput string, firstRelease bool, totalCommits int) string {
 	trimmed := strings.TrimSpace(logOutput)
 	if trimmed == "" {
@@ -231,8 +238,12 @@ func formatChangelog(logOutput string, firstRelease bool, totalCommits int) stri
 	}
 	lines := strings.Split(trimmed, "\n")
 	if firstRelease && totalCommits > firstReleaseCap {
-		lines = lines[:firstReleaseCap]
-		lines = append(lines, fmt.Sprintf("... and %d more", totalCommits-firstReleaseCap))
+		cap := firstReleaseCap
+		if cap > len(lines) {
+			cap = len(lines)
+		}
+		lines = lines[:cap]
+		lines = append(lines, fmt.Sprintf("... and %d more", totalCommits-cap))
 	}
 	return strings.Join(lines, "\n")
 }

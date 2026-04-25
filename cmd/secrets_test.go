@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/urfave/cli/v3"
+	"sigs.k8s.io/yaml"
 )
 
 // ---------- redact ----------
@@ -80,21 +81,40 @@ func TestMarshalPlainSecrets_Deterministic(t *testing.T) {
 	}
 }
 
-func TestMarshalPlainSecrets_SpecialChars(t *testing.T) {
+// TestMarshalPlainSecrets_RoundTrip is the regression for the
+// multi-line corruption: a value containing newlines or special
+// characters must survive marshal → re-parse with the original bytes
+// intact. Earlier versions used yaml.Marshal-then-trim which switched
+// to block-scalar form for multi-line input and produced invalid YAML
+// after concatenation.
+func TestMarshalPlainSecrets_RoundTrip(t *testing.T) {
 	secrets := map[string]string{
-		"with-quote":   `he said "hi"`,
-		"with-newline": "line1\nline2",
-		"with-colon":   "key: value",
+		"with-quote":     `he said "hi"`,
+		"with-newline":   "line1\nline2",
+		"with-colon":     "key: value",
+		"pem-like":       "-----BEGIN KEY-----\nABCDEF\nGHIJKL\n-----END KEY-----",
+		"backslashes":    `\\foo\bar\n`,
+		"unicode":        "héllo wörld 日本",
+		"leading-hash":   "# not a comment",
+		"trailing-space": "trailing   ",
 	}
 	out, err := marshalPlainSecrets(secrets)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The YAML library handles quoting; we just verify all keys round-trip
-	// somehow — full round-trip parse verification is below.
-	for k := range secrets {
-		if !strings.Contains(string(out), k+":") {
-			t.Errorf("missing key %q in output", k)
+
+	var roundTrip map[string]string
+	if err := yaml.Unmarshal(out, &roundTrip); err != nil {
+		t.Fatalf("output is not valid YAML:\n%s\nerr: %v", out, err)
+	}
+	for k, want := range secrets {
+		got, ok := roundTrip[k]
+		if !ok {
+			t.Errorf("key %q missing after round-trip", k)
+			continue
+		}
+		if got != want {
+			t.Errorf("key %q round-trip: got %q, want %q", k, got, want)
 		}
 	}
 }

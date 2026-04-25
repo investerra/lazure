@@ -73,10 +73,15 @@ jobs:
           if [ -z "$body" ]; then
             body="(no changes)"
           fi
+          # Random heredoc delimiter so a commit subject containing the
+          # literal string "EOF_CHANGELOG" can't terminate the heredoc
+          # early and inject arbitrary GitHub Actions output. /dev/urandom
+          # is available on every GH-hosted runner.
+          delim="EOF_$(head -c 16 /dev/urandom | xxd -p)"
           {
-            echo 'body<<EOF_CHANGELOG'
-            echo "$body"
-            echo 'EOF_CHANGELOG'
+            printf 'body<<%s\n' "$delim"
+            printf '%s\n' "$body"
+            printf '%s\n' "$delim"
           } >> "$GITHUB_OUTPUT"
           echo "---- changelog ----"
           echo "$body"
@@ -102,4 +107,4 @@ jobs:
           # Manual chain — a tag push from GITHUB_TOKEN won't trigger
           # release.yml on its own, so we explicitly dispatch it.
           gh workflow run release.yml --ref "$NEW" -f tag="$NEW"
-          echo "Dispatched release.yml for $NEW — goreleaser will build and publish."
+          echo "Dispatched release.yml for $NEW — goreleaser will build and publish assets."

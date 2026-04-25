@@ -100,6 +100,24 @@ func TestFormatChangelog_FirstReleaseOverCap(t *testing.T) {
 	}
 }
 
+// TestFormatChangelog_ShallowCloneNoPanic regression-guards the
+// slice-bounds bug: rev-list can report many more commits than the
+// actual log produced (shallow clones, git options that truncate
+// log). Slicing lines[:firstReleaseCap] without bounding the cap by
+// len(lines) would panic at release time.
+func TestFormatChangelog_ShallowCloneNoPanic(t *testing.T) {
+	// Pretend we have 5 lines but rev-list says 9999.
+	logOut := "- a\n- b\n- c\n- d\n- e"
+	got := formatChangelog(logOut, true, 9999)
+
+	if !strings.Contains(got, "- a") || !strings.Contains(got, "- e") {
+		t.Errorf("expected all 5 lines preserved, got:\n%s", got)
+	}
+	if !strings.Contains(got, "... and 9994 more") {
+		t.Errorf("expected 'and 9994 more' suffix (9999 - 5 actual), got:\n%s", got)
+	}
+}
+
 func itoa(n int) string {
 	if n == 0 {
 		return "0"
