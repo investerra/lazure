@@ -16,7 +16,6 @@ import (
 
 	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
-	"sigs.k8s.io/yaml"
 
 	"github.com/investerra/lazure/internal/azureapi"
 	"github.com/investerra/lazure/internal/errs"
@@ -136,17 +135,11 @@ func printSecretsJSON(secrets map[string]string, reveal bool) error {
 		}
 		out = masked
 	}
-	data, err := yaml.Marshal(out) // sigs.k8s.io/yaml emits JSON-compatible when asked
+	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return errs.System(errs.Wrap(err, "secrets view: marshal"))
 	}
-	// yaml.Marshal from sigs.k8s.io/yaml produces YAML; for JSON, use stdlib json.
-	// Re-emit as proper JSON for --format=json consumers.
-	jsonOut, err := yaml.YAMLToJSON(data)
-	if err != nil {
-		return errs.System(errs.Wrap(err, "secrets view: json convert"))
-	}
-	fmt.Println(string(jsonOut))
+	fmt.Println(string(data))
 	return nil
 }
 

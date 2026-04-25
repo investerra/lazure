@@ -39,7 +39,7 @@ func DoctorFlags() []cli.Flag {
 // This keeps the output focused on the first real problem per env.
 func Doctor(ctx context.Context, c *cli.Command) error {
 	format := c.String("format")
-	color := !c.Bool("no-color") && shouldColor(c.Bool("no-color"))
+	color := shouldColor(c.Bool("no-color"))
 	dir := c.String("dir")
 	slog.Debug("doctor: start", "dir", dir, "format", format, "color", color)
 

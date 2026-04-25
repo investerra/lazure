@@ -79,6 +79,16 @@ func WithCode(code int, err error) error {
 	return &coded{code: code, err: err}
 }
 
+// The five named constructors below — Validation, Drift, Auth, Usage,
+// System — collapse at runtime to two exit codes (CodeTask=1,
+// CodeSystem=2). Their existence is intentional documentation: at the
+// call site, errs.Validation(err) tells the next reader "this is a
+// rule-violation kind of failure" while errs.Auth(err) signals "Azure
+// rejected our token." That shape isn't visible to slog or main.go
+// today, but it's load-bearing for grep-ability and for future code
+// that might want per-category telemetry / nicer error formatting.
+// Don't collapse them just because the runtime mapping is 2-way.
+
 // Validation tags err as a manifest/vars/secrets validation failure
 // (exit 1). Use at the boundary where a validate pass converts multiple
 // findings into a single returnable error.

@@ -41,13 +41,6 @@ func NewKeyVaultClient(vaultURL string, tokens *TokenProvider) *KeyVaultClient {
 	}
 }
 
-// SecretMetadata is the subset of an Azure secret descriptor that list
-// responses populate (list does NOT return the secret value itself).
-type SecretMetadata struct {
-	Name string
-	ID   string
-}
-
 // GetSecret fetches the latest version of a secret's value. Returns
 // ErrSecretNotFound if the secret doesn't exist.
 func (c *KeyVaultClient) GetSecret(ctx context.Context, name string) (string, error) {

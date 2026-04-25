@@ -99,8 +99,9 @@ func printStatusTable(env string, app *azurearm.ContainerApp) error {
 		fmt.Fprintf(tw, "RevisionsMode:\t%s\n", mode)
 	}
 
-	// Scale bounds. Current running replica count requires the /revisions
-	// endpoint — lands with cmd/revisions (697.31).
+	// Scale bounds only — current running replica count would need the
+	// /revisions endpoint per revision; users wanting that detail run
+	// `lazure revisions <env>` instead.
 	if s := app.Properties.Template.Scale; s != nil {
 		fmt.Fprintf(tw, "Replicas:\tmin=%d max=%d\n", s.MinReplicas, s.MaxReplicas)
 	}

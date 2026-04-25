@@ -16,8 +16,6 @@ import (
 // Version is injected at build time via -ldflags "-X main.Version=...".
 var Version = "dev"
 
-var errNotImplemented = errs.New("not implemented yet")
-
 func main() {
 	// Register this package's build-time Version with the selfupdate
 	// command so it can compare against GitHub Releases.
@@ -194,11 +192,5 @@ func newApp() *cli.Command {
 func envArg() []cli.Argument {
 	return []cli.Argument{
 		&cli.StringArg{Name: "env", UsageText: "target environment (dev|uat|prd|...)"},
-	}
-}
-
-func stub(name string) cli.ActionFunc {
-	return func(ctx context.Context, cmd *cli.Command) error {
-		return errs.System(errs.Wrapf(errNotImplemented, "%s", name))
 	}
 }

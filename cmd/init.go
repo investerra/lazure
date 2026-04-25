@@ -448,7 +448,7 @@ type projectInferences struct {
 // handling for near-zero benefit at this scale.
 func inferAll(ctx context.Context, cfg initConfig) projectInferences {
 	out := projectInferences{byEnv: map[string]envInference{}}
-	out.gitOrg = inferGitOrg()
+	out.gitOrg = inferGitOrg(ctx)
 
 	if _, err := exec.LookPath("az"); err != nil {
 		slog.Debug("init: az not on PATH — skipping Azure inference")
@@ -496,8 +496,8 @@ func singleAzID(ctx context.Context, args ...string) string {
 // inferGitOrg extracts the org segment from `git remote get-url origin`.
 // Returns "" on any parse failure; the caller falls back to omitting
 // the org segment in the composed image path.
-func inferGitOrg() string {
-	out, err := exec.Command("git", "remote", "get-url", "origin").Output()
+func inferGitOrg(ctx context.Context) string {
+	out, err := exec.CommandContext(ctx, "git", "remote", "get-url", "origin").Output()
 	if err != nil {
 		return ""
 	}
