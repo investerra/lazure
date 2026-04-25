@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -307,9 +308,9 @@ func discoverEnvs(dir string) []string {
 
 // checkEnv runs the per-env subchecks in short-circuiting order:
 // vars file exists → secrets file exists → sops decrypts → manifest
-// renders → KV reachable. First failure aborts the remaining subchecks,
-// which are rendered as "—". This mirrors how a user would debug by
-// hand: fix the earliest problem, then re-run.
+// renders → subscription reachable → KV reachable. First failure aborts
+// the remaining subchecks, which are rendered as "—". This mirrors how
+// a user would debug by hand: fix the earliest problem, then re-run.
 func checkEnv(ctx context.Context, dir, env string) envCheck {
 	ec := envCheck{env: env, status: statusPass}
 
@@ -317,9 +318,10 @@ func checkEnv(ctx context.Context, dir, env string) envCheck {
 		"vars":             "—",
 		"secrets decrypt":  "—",
 		"manifest renders": "—",
+		"sub reachable":    "—",
 		"KV reachable":     "—",
 	}
-	order := []string{"vars", "secrets decrypt", "manifest renders", "KV reachable"}
+	order := []string{"vars", "secrets decrypt", "manifest renders", "sub reachable", "KV reachable"}
 
 	fail := func(stage, msg string) envCheck {
 		ec.status = statusFail
@@ -347,21 +349,36 @@ func checkEnv(ctx context.Context, dir, env string) envCheck {
 	}
 	marks["secrets decrypt"] = "✓"
 
-	if _, _, err := lazurecfg.LoadManifest(lazurecfg.LoadOptions{ProjectDir: dir, Env: env}); err != nil {
+	manifest, _, err := lazurecfg.LoadManifest(lazurecfg.LoadOptions{ProjectDir: dir, Env: env})
+	if err != nil {
 		marks["manifest renders"] = "✗"
 		return fail("manifest render", err.Error())
 	}
 	marks["manifest renders"] = "✓"
 
+	// Subscription probe — catches tenant mismatches up front (a
+	// common footgun with multi-sub setups: az logged into dev but
+	// the user runs lazure deploy prd).
+	tp, err := azureapi.NewTokenProvider()
+	if err != nil {
+		marks["sub reachable"] = "✗"
+		return fail("azure auth", err.Error())
+	}
+	subID := manifest.App.Identity.SubscriptionID()
+	if subID == "" {
+		marks["sub reachable"] = "✗"
+		return fail("sub id", fmt.Sprintf("could not derive subscription id from app.identity %q", manifest.App.Identity))
+	}
+	if _, err := azureapi.LookupSubscription(ctx, tp, subID); err != nil {
+		marks["sub reachable"] = "✗"
+		return fail("sub probe", subProbeHint(err, subID))
+	}
+	marks["sub reachable"] = "✓"
+
 	vaultURL, err := sopsio.VaultURL(secretsPath)
 	if err != nil {
 		marks["KV reachable"] = "✗"
 		return fail("sops vault url", err.Error())
-	}
-	tp, err := azureapi.NewTokenProvider()
-	if err != nil {
-		marks["KV reachable"] = "✗"
-		return fail("kv auth", err.Error())
 	}
 	kv := azureapi.NewKeyVaultClient(vaultURL, tp)
 	if _, err := kv.ListSecrets(ctx); err != nil {
@@ -372,6 +389,22 @@ func checkEnv(ctx context.Context, dir, env string) envCheck {
 
 	ec.overall = joinMarks(order, marks)
 	return ec
+}
+
+// subProbeHint returns a tighter, more actionable message for the
+// usual subscription-probe failures than the wrapped error text would
+// give on its own.
+func subProbeHint(err error, subID string) string {
+	switch {
+	case errors.Is(err, azureapi.ErrSubscriptionAuth):
+		return fmt.Sprintf("token rejected for %s — wrong tenant? try `az login --tenant <id>`", subID)
+	case errors.Is(err, azureapi.ErrSubscriptionForbidden):
+		return fmt.Sprintf("forbidden on %s — your account lacks Reader RBAC", subID)
+	case errors.Is(err, azureapi.ErrSubscriptionNotFound):
+		return fmt.Sprintf("subscription %s not found — typo in app.identity?", subID)
+	default:
+		return err.Error()
+	}
 }
 
 func joinMarks(order []string, marks map[string]string) string {

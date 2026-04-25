@@ -61,7 +61,8 @@ func Restart(ctx context.Context, c *cli.Command) error {
 	}
 
 	if !yes {
-		fmt.Printf("\nrestart revision %s in %s?\n", rev, t.Env)
+		fmt.Printf("\nrestart revision %s\n  env:      %s\n  sub:      %s\n  rg:       %s\n",
+			rev, t.Env, t.SubLabel(), t.RG)
 		if !promptConfirm("proceed?") {
 			return errs.Usage(errs.New("restart: aborted by user"))
 		}
@@ -79,7 +80,7 @@ func Restart(ctx context.Context, c *cli.Command) error {
 		slog.Debug("restart: captured baseline replicas", "count", len(baseline))
 	}
 
-	slog.Info("restarting revision", "app", t.Name, "revision", rev, "env", t.Env)
+	slog.Info("restarting revision", "app", t.Name, "revision", rev, "env", t.Env, "sub", t.SubLabel())
 	if err := t.CA.RestartRevision(ctx, t.Sub, t.RG, t.Name, rev); err != nil {
 		return errs.System(errs.Wrap(err, "restart"))
 	}

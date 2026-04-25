@@ -83,7 +83,8 @@ func Rollback(ctx context.Context, c *cli.Command) error {
 
 	// Confirmation for -y-less path.
 	if !yes {
-		fmt.Printf("\nroll back traffic from %s → %s?\n", current, to)
+		fmt.Printf("\nroll back traffic from %s → %s\n  env:  %s\n  sub:  %s\n  rg:   %s\n",
+			current, to, t.Env, t.SubLabel(), t.RG)
 		if !promptConfirm("proceed?") {
 			return errs.Usage(errs.New("rollback: aborted by user"))
 		}
@@ -92,7 +93,7 @@ func Rollback(ctx context.Context, c *cli.Command) error {
 	traffic := []azurearm.TrafficEntry{
 		{Weight: 100, RevisionName: to},
 	}
-	slog.Info("rolling back", "app", t.Name, "from", current, "to", to)
+	slog.Info("rolling back", "app", t.Name, "from", current, "to", to, "env", t.Env, "sub", t.SubLabel())
 	start := time.Now()
 	if _, err := t.CA.PatchTrafficAndWait(ctx, t.Sub, t.RG, t.Name, traffic, "Single"); err != nil {
 		return errs.System(errs.Wrap(err, "rollback: patch traffic"))

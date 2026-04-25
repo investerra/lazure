@@ -117,14 +117,15 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 	// Confirm.
 	image := findAppImage(t.Manifest)
 	if !yes {
-		fmt.Printf("\ndeploy %s to %s (rg=%s, image=%s)\n", t.Name, t.Env, t.RG, image)
+		fmt.Printf("\ndeploy %s to %s\n  sub:   %s\n  rg:    %s\n  image: %s\n",
+			t.Name, t.Env, t.SubLabel(), t.RG, image)
 		if !promptConfirm("proceed?") {
 			return errs.Usage(errs.New("deploy: aborted by user"))
 		}
 	}
 
 	// PUT + poll.
-	slog.Info("deploying", "app", t.Name, "env", t.Env, "rg", t.RG, "image", image)
+	slog.Info("deploying", "app", t.Name, "env", t.Env, "sub", t.SubLabel(), "rg", t.RG, "image", image)
 	start := time.Now()
 	final, err := t.CA.PutAndWait(ctx, t.Sub, t.RG, t.Name, armApp)
 	if err != nil {
