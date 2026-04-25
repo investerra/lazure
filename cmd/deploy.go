@@ -47,7 +47,15 @@ func DeployFlags() []cli.Flag {
 func Deploy(ctx context.Context, c *cli.Command) error {
 	print := c.Bool("print")
 	yes := c.Bool("yes")
+	// --wait defaults to TRUE on interactive terminals (humans want to
+	// see the deploy land), FALSE when piped (CI / scripts assume
+	// fire-and-return semantics from years of `kubectl apply`-style
+	// tooling). Users can override either way: --wait=false to opt
+	// out on a TTY, --wait to opt in when piping.
 	wait := c.Bool("wait")
+	if !c.IsSet("wait") && isStdoutTTY() {
+		wait = true
+	}
 	waitTimeout := c.Duration("wait-timeout")
 	streamLogs := c.Bool("logs")
 	color := shouldColor(c.Bool("no-color"))
@@ -124,10 +132,15 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 		}
 	}
 
-	// PUT + poll.
+	// PUT + poll. Indefinite spinner during the ARM async-op poll —
+	// without it the user sees "deploying" then ~30-60s of silence.
 	slog.Info("deploying", "app", t.Name, "env", t.Env, "sub", t.SubLabel(), "rg", t.RG, "image", image)
 	start := time.Now()
+	sp := newWaitSpinner(time.Time{})
+	sp.SetMessage("ARM operation in progress")
+	sp.Start()
 	final, err := t.CA.PutAndWait(ctx, t.Sub, t.RG, t.Name, armApp)
+	sp.Stop()
 	if err != nil {
 		return errs.System(errs.Wrap(err, "deploy"))
 	}

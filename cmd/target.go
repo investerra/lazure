@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/urfave/cli/v3"
 
@@ -11,6 +12,19 @@ import (
 	"github.com/investerra/lazure/internal/errs"
 	"github.com/investerra/lazure/internal/lazurecfg"
 )
+
+// isStdoutTTY reports whether os.Stdout is an interactive terminal.
+// Used by commands whose default behavior changes based on the
+// likely audience (human at a prompt vs CI / pipe). Failures stat'ing
+// the fd default to "not a TTY" — safer to assume scripted-use than
+// to surface interactive UI in a log file.
+func isStdoutTTY() bool {
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
 
 // azureTarget gathers everything an env-taking command needs to talk
 // to Azure: the loaded manifest, derived subscription/resource-group/

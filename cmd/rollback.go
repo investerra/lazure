@@ -95,7 +95,12 @@ func Rollback(ctx context.Context, c *cli.Command) error {
 	}
 	slog.Info("rolling back", "app", t.Name, "from", current, "to", to, "env", t.Env, "sub", t.SubLabel())
 	start := time.Now()
-	if _, err := t.CA.PatchTrafficAndWait(ctx, t.Sub, t.RG, t.Name, traffic, "Single"); err != nil {
+	sp := newWaitSpinner(time.Time{})
+	sp.SetMessage("ARM operation in progress")
+	sp.Start()
+	_, err = t.CA.PatchTrafficAndWait(ctx, t.Sub, t.RG, t.Name, traffic, "Single")
+	sp.Stop()
+	if err != nil {
 		return errs.System(errs.Wrap(err, "rollback: patch traffic"))
 	}
 

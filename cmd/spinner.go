@@ -32,6 +32,10 @@ type waitSpinner struct {
 // when you're ready for animation to begin. Call Stop() to clear the
 // line and return the cursor. The zero-value message is "working..." —
 // callers typically update it immediately.
+//
+// Pass a zero time.Time for `deadline` to render only the elapsed time
+// (no "X until timeout" suffix). Used for indefinite waits like ARM
+// async-op polling where we don't know how long Azure will take.
 func newWaitSpinner(deadline time.Time) *waitSpinner {
 	return &waitSpinner{
 		message:  "working...",
@@ -99,13 +103,19 @@ func (s *waitSpinner) render(i int) {
 	s.mu.Unlock()
 
 	elapsed := time.Since(s.start).Round(time.Second)
+
+	// \r returns to column 0; \x1b[K clears line before re-printing so a
+	// shorter new message doesn't leave trailing chars from the prior one.
+	if s.deadline.IsZero() {
+		// Open-ended wait: just elapsed, no countdown.
+		fmt.Fprintf(os.Stderr, "\r\x1b[K%c %s (%s elapsed)",
+			spinnerFrames[i%len(spinnerFrames)], msg, fmtDuration(elapsed))
+		return
+	}
 	remaining := time.Until(s.deadline).Round(time.Second)
 	if remaining < 0 {
 		remaining = 0
 	}
-
-	// \r returns to column 0; \x1b[K clears line before re-printing so a
-	// shorter new message doesn't leave trailing chars from the prior one.
 	fmt.Fprintf(os.Stderr, "\r\x1b[K%c %s (%s elapsed, %s until timeout)",
 		spinnerFrames[i%len(spinnerFrames)], msg, fmtDuration(elapsed), fmtDuration(remaining))
 }
