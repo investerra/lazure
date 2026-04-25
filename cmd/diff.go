@@ -43,43 +43,24 @@ func DiffFlags() []cli.Flag {
 //	1  drift detected (errs.Drift)
 //	2  system / auth / usage error
 func Diff(ctx context.Context, c *cli.Command) error {
-	env := c.StringArg("env")
-	if env == "" {
-		return errs.Usage(errs.New("diff: env argument is required"))
-	}
-	dir := c.String("dir")
 	format := c.String("format")
 	noColor := c.Bool("no-color")
-	slog.Debug("diff: start", "env", env, "dir", dir, "format", format, "no_color", noColor)
 
-	manifest, vars, err := lazurecfg.LoadManifest(lazurecfg.LoadOptions{
-		ProjectDir: dir, Env: env,
-	})
+	t, err := loadAzureTarget(c, "diff")
 	if err != nil {
-		return errs.Usage(errs.Wrap(err, "diff: load manifest"))
+		return err
 	}
-	if r := lazurecfg.Validate(manifest); r.HasErrors() {
+	slog.Debug("diff: start", "env", t.Env, "dir", t.Dir, "format", format, "no_color", noColor)
+
+	if r := lazurecfg.Validate(t.Manifest); r.HasErrors() {
 		return errs.Validation(errs.Wrap(r.Err(), "diff"))
 	}
 
-	sub := manifest.App.Identity.SubscriptionID()
-	if sub == "" {
-		return errs.Usage(errs.Errorf("diff: could not derive subscription id from app.identity %q", manifest.App.Identity))
-	}
-	rg, name := manifest.App.ResourceGroup, manifest.App.Name
-
-	slog.Debug("diff: creating Azure credential")
-	tokens, err := azureapi.NewTokenProvider()
-	if err != nil {
-		return errs.Auth(errs.Wrap(err, "diff: auth"))
-	}
-	ca := azureapi.NewContainerAppsClient(tokens)
-
 	slog.Debug("diff: fetching deployed app state")
-	actual, err := ca.Get(ctx, sub, rg, name)
+	actual, err := t.CA.Get(ctx, t.Sub, t.RG, t.Name)
 	switch {
 	case errors.Is(err, azureapi.ErrContainerAppNotFound):
-		slog.Info("app not deployed yet — diff treats deployed-side as empty", "app", name)
+		slog.Info("app not deployed yet — diff treats deployed-side as empty", "app", t.Name)
 		actual = &azurearm.ContainerApp{}
 	case err != nil:
 		return errs.System(errs.Wrap(err, "diff: fetch deployed state"))
@@ -88,8 +69,8 @@ func Diff(ctx context.Context, c *cli.Command) error {
 	// Build expected from the manifest. If actual is a real deployed
 	// revision, use its latest revision name for traffic.previous
 	// resolution (same as deploy would do).
-	vaultURL, _ := vars["keyvault_url"].(string)
-	expected, err := azurearm.Transform(manifest, azurearm.TransformOptions{
+	vaultURL, _ := t.Vars["keyvault_url"].(string)
+	expected, err := azurearm.Transform(t.Manifest, azurearm.TransformOptions{
 		VaultURL:         vaultURL,
 		PreviousRevision: actual.Properties.LatestRevisionName,
 	})
@@ -111,7 +92,7 @@ func Diff(ctx context.Context, c *cli.Command) error {
 	}
 
 	if string(expectedBytes) == string(actualBytes) {
-		slog.Info("no drift", "env", env, "app", name)
+		slog.Info("no drift", "env", t.Env, "app", t.Name)
 		return nil
 	}
 
@@ -120,7 +101,7 @@ func Diff(ctx context.Context, c *cli.Command) error {
 	}
 
 	// Drift detected → exit 1 via errs.Drift.
-	return errs.Drift(errs.Errorf("drift detected between deployed and rendered %s", name))
+	return errs.Drift(errs.Errorf("drift detected between deployed and rendered %s", t.Name))
 }
 
 // shouldColor returns true when the unified diff output should be

@@ -10,9 +10,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/investerra/lazure/internal/azureapi"
 	"github.com/investerra/lazure/internal/errs"
-	"github.com/investerra/lazure/internal/lazurecfg"
 )
 
 // ExecFlags are the flags for `lazure exec`.
@@ -60,61 +58,39 @@ func ExecArgs() []cli.Argument {
 // runs `ls -la /srv` correctly. Quoting compound args (embedded
 // spaces) is lossy — a limitation inherited from az itself.
 func Exec(ctx context.Context, c *cli.Command) error {
-	env := c.StringArg("env")
-	if env == "" {
-		return errs.Usage(errs.New("exec: env argument is required"))
-	}
 	container := c.String("container")
 	rev := c.String("revision")
 	cmdArgs := c.StringArgs("cmd")
-	dir := c.String("dir")
-	slog.Debug("exec: start",
-		"env", env, "container", container, "revision", rev, "cmd", cmdArgs)
 
 	if _, err := exec.LookPath("az"); err != nil {
 		return errs.Usage(errs.New("exec: az binary not found on PATH — install Azure CLI (https://aka.ms/InstallAzureCli)"))
 	}
 
-	manifest, _, err := lazurecfg.LoadManifest(lazurecfg.LoadOptions{ProjectDir: dir, Env: env})
+	t, err := loadAzureTarget(c, "exec")
 	if err != nil {
-		return errs.Usage(errs.Wrap(err, "exec: load manifest"))
+		return err
 	}
+	slog.Debug("exec: start",
+		"env", t.Env, "container", container, "revision", rev, "cmd", cmdArgs)
+
 	if container == "" {
 		// lazurecfg/validate.go rejects 0-container manifests at load,
 		// so manifest.Containers[0] is safe here.
-		container = manifest.Containers[0].Name
+		container = t.Manifest.Containers[0].Name
 		slog.Debug("exec: defaulting to first manifest container", "container", container)
 	}
 
-	sub := manifest.App.Identity.SubscriptionID()
-	if sub == "" {
-		return errs.Usage(errs.Errorf("exec: could not derive subscription id from app.identity %q", manifest.App.Identity))
-	}
-	rg, name := manifest.App.ResourceGroup, manifest.App.Name
-
 	if rev == "" {
-		tokens, err := azureapi.NewTokenProvider()
+		rev, err = resolveLatestRevision(ctx, t, "exec")
 		if err != nil {
-			return errs.Auth(errs.Wrap(err, "exec: auth"))
-		}
-		ca := azureapi.NewContainerAppsClient(tokens)
-		app, err := ca.Get(ctx, sub, rg, name)
-		switch {
-		case errors.Is(err, azureapi.ErrContainerAppNotFound):
-			return errs.Usage(errs.Errorf("exec: app %q not deployed yet", name))
-		case err != nil:
-			return errs.System(errs.Wrap(err, "exec: fetch current state"))
-		}
-		rev = app.Properties.LatestRevisionName
-		if rev == "" {
-			return errs.System(errs.New("exec: app has no latestRevisionName — is it still provisioning?"))
+			return err
 		}
 		slog.Debug("exec: resolved revision", "revision", rev)
 	}
 
-	azArgs := buildAzExecArgs(name, rg, rev, container, cmdArgs)
+	azArgs := buildAzExecArgs(t.Name, t.RG, rev, container, cmdArgs)
 	slog.Info("exec: launching az containerapp exec",
-		"app", name, "revision", rev, "container", container, "cmd", cmdArgs)
+		"app", t.Name, "revision", rev, "container", container, "cmd", cmdArgs)
 	slog.Debug("exec: az args", "args", azArgs)
 
 	az := exec.CommandContext(ctx, "az", azArgs...)

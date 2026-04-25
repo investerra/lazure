@@ -14,7 +14,6 @@ import (
 	"github.com/investerra/lazure/internal/azureapi"
 	"github.com/investerra/lazure/internal/azurearm"
 	"github.com/investerra/lazure/internal/errs"
-	"github.com/investerra/lazure/internal/lazurecfg"
 )
 
 // StatusFlags returns the status-specific flag list for main.go to wire.
@@ -47,45 +46,26 @@ func StatusFlags() []cli.Flag {
 // filtered; read-only fields are included because they're what you
 // actually want to see in "status."
 func Status(ctx context.Context, c *cli.Command) error {
-	env := c.StringArg("env")
-	if env == "" {
-		return errs.Usage(errs.New("status: env argument is required (e.g. 'lazure status dev')"))
-	}
-	dir := c.String("dir")
 	format := c.String("format")
-	slog.Debug("status: start", "env", env, "dir", dir, "format", format)
 
-	manifest, _, err := lazurecfg.LoadManifest(lazurecfg.LoadOptions{
-		ProjectDir: dir, Env: env,
-	})
+	t, err := loadAzureTarget(c, "status")
 	if err != nil {
-		return errs.Usage(errs.Wrap(err, "status: load manifest"))
+		return err
 	}
+	slog.Debug("status: start", "env", t.Env, "dir", t.Dir, "format", format)
 
-	sub := manifest.App.Identity.SubscriptionID()
-	if sub == "" {
-		return errs.Usage(errs.Errorf("status: could not derive subscription id from app.identity %q", manifest.App.Identity))
-	}
-	rg, name := manifest.App.ResourceGroup, manifest.App.Name
-
-	tokens, err := azureapi.NewTokenProvider()
-	if err != nil {
-		return errs.Auth(errs.Wrap(err, "status: auth"))
-	}
-	ca := azureapi.NewContainerAppsClient(tokens)
-
-	slog.Debug("status: fetching container app", "subscription", sub, "rg", rg, "app", name)
-	app, err := ca.Get(ctx, sub, rg, name)
+	slog.Debug("status: fetching container app", "subscription", t.Sub, "rg", t.RG, "app", t.Name)
+	app, err := t.CA.Get(ctx, t.Sub, t.RG, t.Name)
 	switch {
 	case errors.Is(err, azureapi.ErrContainerAppNotFound):
-		return errs.Usage(errs.Errorf("status: app %q not found in %s (not deployed yet?)", name, rg))
+		return errs.Usage(errs.Errorf("status: app %q not found in %s (not deployed yet?)", t.Name, t.RG))
 	case err != nil:
 		return errs.System(errs.Wrap(err, "status: get"))
 	}
 
 	switch format {
 	case "", "table":
-		return printStatusTable(env, app)
+		return printStatusTable(t.Env, app)
 	case "json":
 		return printStatusJSON(app)
 	default:

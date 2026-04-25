@@ -45,11 +45,6 @@ func DeployFlags() []cli.Flag {
 //  7. PutAndWait (poll Azure-AsyncOperation to Succeeded)
 //  8. Report the final revision name
 func Deploy(ctx context.Context, c *cli.Command) error {
-	env := c.StringArg("env")
-	if env == "" {
-		return errs.Usage(errs.New("deploy: env argument is required (e.g. 'lazure deploy dev')"))
-	}
-	dir := c.String("dir")
 	print := c.Bool("print")
 	yes := c.Bool("yes")
 	wait := c.Bool("wait")
@@ -57,64 +52,40 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 	streamLogs := c.Bool("logs")
 	color := shouldColor(c.Bool("no-color"))
 
-	cliVars, err := parseCLIVars(c.StringSlice("var"))
+	t, err := loadAzureTarget(c, "deploy")
 	if err != nil {
 		return err
 	}
-	slog.Debug("deploy: start", "env", env, "dir", dir, "print", print, "yes", yes, "cli_vars", len(cliVars))
+	slog.Debug("deploy: start",
+		"env", t.Env, "dir", t.Dir, "print", print, "yes", yes,
+		"subscription", t.Sub, "resource_group", t.RG, "app", t.Name)
 
-	// Load + validate manifest.
-	slog.Debug("deploy: loading manifest")
-	manifest, vars, err := lazurecfg.LoadManifest(lazurecfg.LoadOptions{
-		ProjectDir: dir,
-		Env:        env,
-		CLIVars:    cliVars,
-	})
-	if err != nil {
-		return errs.Usage(errs.Wrap(err, "deploy: load manifest"))
-	}
-	if r := lazurecfg.Validate(manifest); r.HasErrors() {
+	// Validate before any side effects.
+	if r := lazurecfg.Validate(t.Manifest); r.HasErrors() {
 		return errs.Validation(errs.Wrap(r.Err(), "deploy"))
 	}
-	for _, w := range lazurecfg.Validate(manifest).Warnings {
+	for _, w := range lazurecfg.Validate(t.Manifest).Warnings {
 		slog.Warn(w)
 	}
 
 	// Cross-file secret reference check (no KV call — quick pre-flight).
 	slog.Debug("deploy: checking secret references")
-	encPath := filepath.Join(dir, "envs", env+".secrets.yml")
+	encPath := filepath.Join(t.Dir, "envs", t.Env+".secrets.yml")
 	secrets, err := sopsio.Decrypt(encPath)
 	if err != nil {
 		return errs.Usage(errs.Wrap(err, "deploy: decrypt secrets"))
 	}
-	if r := verify.Secrets(ctx, manifest, secrets, nil); r.HasErrors() {
+	if r := verify.Secrets(ctx, t.Manifest, secrets, nil); r.HasErrors() {
 		return errs.Validation(errs.Wrap(r.Err(), "deploy"))
 	}
-
-	// Azure credential + container apps client.
-	slog.Debug("deploy: creating Azure credential")
-	tokens, err := azureapi.NewTokenProvider()
-	if err != nil {
-		return errs.Auth(errs.Wrap(err, "deploy: auth"))
-	}
-	ca := azureapi.NewContainerAppsClient(tokens)
-
-	// Derive subscription from app.identity.
-	sub := manifest.App.Identity.SubscriptionID()
-	if sub == "" {
-		return errs.Usage(errs.Errorf("deploy: could not derive subscription id from app.identity %q", manifest.App.Identity))
-	}
-	rg := manifest.App.ResourceGroup
-	name := manifest.App.Name
-	slog.Debug("deploy: resolved target", "subscription", sub, "resource_group", rg, "app", name)
 
 	// Resolve previous revision. Missing app = first deploy.
 	var previousRev string
 	slog.Debug("deploy: fetching current state (for traffic.previous resolution)")
-	current, err := ca.Get(ctx, sub, rg, name)
+	current, err := t.CA.Get(ctx, t.Sub, t.RG, t.Name)
 	switch {
 	case errors.Is(err, azureapi.ErrContainerAppNotFound):
-		slog.Info("first deploy detected; no previous revision to split traffic with", "app", name)
+		slog.Info("first deploy detected; no previous revision to split traffic with", "app", t.Name)
 	case err != nil:
 		return errs.System(errs.Wrap(err, "deploy: fetch current app state"))
 	default:
@@ -125,8 +96,8 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 	}
 
 	// Transform to ARM.
-	vaultURL, _ := vars["keyvault_url"].(string)
-	armApp, err := azurearm.Transform(manifest, azurearm.TransformOptions{
+	vaultURL, _ := t.Vars["keyvault_url"].(string)
+	armApp, err := azurearm.Transform(t.Manifest, azurearm.TransformOptions{
 		VaultURL:         vaultURL,
 		PreviousRevision: previousRev,
 	})
@@ -144,25 +115,25 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 	}
 
 	// Confirm.
-	image := findAppImage(manifest)
+	image := findAppImage(t.Manifest)
 	if !yes {
-		fmt.Printf("\ndeploy %s to %s (rg=%s, image=%s)\n", name, env, rg, image)
+		fmt.Printf("\ndeploy %s to %s (rg=%s, image=%s)\n", t.Name, t.Env, t.RG, image)
 		if !promptConfirm("proceed?") {
 			return errs.Usage(errs.New("deploy: aborted by user"))
 		}
 	}
 
 	// PUT + poll.
-	slog.Info("deploying", "app", name, "env", env, "rg", rg, "image", image)
+	slog.Info("deploying", "app", t.Name, "env", t.Env, "rg", t.RG, "image", image)
 	start := time.Now()
-	final, err := ca.PutAndWait(ctx, sub, rg, name, armApp)
+	final, err := t.CA.PutAndWait(ctx, t.Sub, t.RG, t.Name, armApp)
 	if err != nil {
 		return errs.System(errs.Wrap(err, "deploy"))
 	}
 
 	slog.Info("deploy succeeded",
-		"app", name,
-		"env", env,
+		"app", t.Name,
+		"env", t.Env,
 		"revision", final.Properties.LatestRevisionName,
 		"duration", time.Since(start).Round(time.Second))
 
@@ -172,11 +143,11 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 			slog.Warn("deploy: no latestRevisionName after PutAndWait — skipping --wait")
 			return nil
 		}
-		if err := waitForRevisionReady(ctx, ca, sub, rg, name, newRev, waitTimeout, streamLogs, color); err != nil {
+		if err := waitForRevisionReady(ctx, t.CA, t.Sub, t.RG, t.Name, newRev, waitTimeout, streamLogs, color); err != nil {
 			return errs.System(errs.Wrap(err, "deploy: --wait"))
 		}
 		slog.Info("deploy --wait complete — all replicas Ready",
-			"app", name, "revision", newRev)
+			"app", t.Name, "revision", newRev)
 	}
 	return nil
 }

@@ -27,20 +27,9 @@ import (
 // no blue/green resolution). For diff or deploy, the actual revision
 // gets filled in at call time.
 func Render(ctx context.Context, c *cli.Command) error {
-	env := c.StringArg("env")
-	if env == "" {
-		return errs.Usage(errs.New("render: env argument is required (e.g. 'lazure render dev')"))
-	}
-	dir := c.String("dir")
-	slog.Debug("render: start", "env", env, "dir", dir)
-
-	slog.Debug("render: loading manifest")
-	manifest, vars, err := lazurecfg.LoadManifest(lazurecfg.LoadOptions{
-		ProjectDir: dir,
-		Env:        env,
-	})
+	manifest, vars, err := loadManifestForCommand(c, "render")
 	if err != nil {
-		return errs.Usage(errs.Wrap(err, "render: loading manifest"))
+		return err
 	}
 	slog.Debug("render: manifest loaded",
 		"app", manifest.App.Name,

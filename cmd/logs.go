@@ -15,10 +15,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/urfave/cli/v3"
 
-	"github.com/investerra/lazure/internal/azureapi"
 	"github.com/investerra/lazure/internal/azurearm"
 	"github.com/investerra/lazure/internal/errs"
-	"github.com/investerra/lazure/internal/lazurecfg"
 )
 
 // LogsFlags are the flags for `lazure logs`.
@@ -43,11 +41,6 @@ func LogsFlags() []cli.Flag {
 // cleanly, and returns nil. StreamLogs surfaces ctx.Canceled which we
 // swallow here since it's the expected shutdown path.
 func Logs(ctx context.Context, c *cli.Command) error {
-	env := c.StringArg("env")
-	if env == "" {
-		return errs.Usage(errs.New("logs: env argument is required"))
-	}
-	dir := c.String("dir")
 	container := c.String("container")
 	follow := c.Bool("follow")
 	tail := c.Int("tail")
@@ -55,50 +48,31 @@ func Logs(ctx context.Context, c *cli.Command) error {
 	replica := c.String("replica")
 	raw := c.Bool("raw")
 	color := !raw && shouldColor(c.Bool("no-color"))
+
+	t, err := loadAzureTarget(c, "logs")
+	if err != nil {
+		return err
+	}
 	slog.Debug("logs: start",
-		"env", env, "container", container, "follow", follow,
+		"env", t.Env, "container", container, "follow", follow,
 		"tail", tail, "revision", rev, "replica", replica,
 		"raw", raw, "color", color)
 
-	manifest, _, err := lazurecfg.LoadManifest(lazurecfg.LoadOptions{ProjectDir: dir, Env: env})
-	if err != nil {
-		return errs.Usage(errs.Wrap(err, "logs: load manifest"))
-	}
-	sub := manifest.App.Identity.SubscriptionID()
-	if sub == "" {
-		return errs.Usage(errs.Errorf("logs: could not derive subscription id from app.identity %q", manifest.App.Identity))
-	}
-	rg, name := manifest.App.ResourceGroup, manifest.App.Name
-
-	tokens, err := azureapi.NewTokenProvider()
-	if err != nil {
-		return errs.Auth(errs.Wrap(err, "logs: auth"))
-	}
-	ca := azureapi.NewContainerAppsClient(tokens)
-
 	if rev == "" {
-		app, err := ca.Get(ctx, sub, rg, name)
-		switch {
-		case errors.Is(err, azureapi.ErrContainerAppNotFound):
-			return errs.Usage(errs.Errorf("logs: app %q not deployed yet", name))
-		case err != nil:
-			return errs.System(errs.Wrap(err, "logs: fetch current state"))
+		rev, err = resolveLatestRevision(ctx, t, "logs")
+		if err != nil {
+			return err
 		}
-		rev = app.Properties.LatestRevisionName
-		if rev == "" {
-			return errs.System(errs.New("logs: app has no latestRevisionName — is it still provisioning?"))
-		}
-		slog.Debug("logs: using current latest revision", "revision", rev)
 	}
 
 	slog.Info("streaming logs",
-		"app", name, "env", env, "revision", rev,
+		"app", t.Name, "env", t.Env, "revision", rev,
 		"replica", replica, "container", container, "follow", follow, "tail", tail)
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	err = streamContainerLogs(ctx, ca, sub, rg, name, rev, streamLogsOptions{
+	err = streamContainerLogs(ctx, t.CA, t.Sub, t.RG, t.Name, rev, streamLogsOptions{
 		Container: container,
 		Replica:   replica,
 		Follow:    follow,

@@ -13,7 +13,6 @@ import (
 	"github.com/investerra/lazure/internal/azureapi"
 	"github.com/investerra/lazure/internal/azurearm"
 	"github.com/investerra/lazure/internal/errs"
-	"github.com/investerra/lazure/internal/lazurecfg"
 )
 
 // RestartFlags are the flags for `lazure restart`.
@@ -41,55 +40,30 @@ const restartPollInterval = 3 * time.Second
 // Defaults to the currently-active revision (latestRevisionName)
 // when --revision is omitted.
 func Restart(ctx context.Context, c *cli.Command) error {
-	env := c.StringArg("env")
-	if env == "" {
-		return errs.Usage(errs.New("restart: env argument is required"))
-	}
-	dir := c.String("dir")
 	rev := c.String("revision")
 	yes := c.Bool("yes")
 	wait := c.Bool("wait")
 	waitTimeout := c.Duration("wait-timeout")
 	streamLogs := c.Bool("logs")
 	color := shouldColor(c.Bool("no-color"))
+
+	t, err := loadAzureTarget(c, "restart")
+	if err != nil {
+		return err
+	}
 	slog.Debug("restart: start",
-		"env", env, "revision", rev, "yes", yes, "wait", wait,
+		"env", t.Env, "revision", rev, "yes", yes, "wait", wait,
 		"wait_timeout", waitTimeout, "logs", streamLogs)
 
-	manifest, _, err := lazurecfg.LoadManifest(lazurecfg.LoadOptions{ProjectDir: dir, Env: env})
-	if err != nil {
-		return errs.Usage(errs.Wrap(err, "restart: load manifest"))
-	}
-	sub := manifest.App.Identity.SubscriptionID()
-	if sub == "" {
-		return errs.Usage(errs.Errorf("restart: could not derive subscription id from app.identity %q", manifest.App.Identity))
-	}
-	rg, name := manifest.App.ResourceGroup, manifest.App.Name
-
-	tokens, err := azureapi.NewTokenProvider()
-	if err != nil {
-		return errs.Auth(errs.Wrap(err, "restart: auth"))
-	}
-	ca := azureapi.NewContainerAppsClient(tokens)
-
-	// Default revision = current app's latestRevisionName.
 	if rev == "" {
-		app, err := ca.Get(ctx, sub, rg, name)
-		switch {
-		case errors.Is(err, azureapi.ErrContainerAppNotFound):
-			return errs.Usage(errs.Errorf("restart: app %q not deployed yet", name))
-		case err != nil:
-			return errs.System(errs.Wrap(err, "restart: fetch current state"))
+		rev, err = resolveLatestRevision(ctx, t, "restart")
+		if err != nil {
+			return err
 		}
-		rev = app.Properties.LatestRevisionName
-		if rev == "" {
-			return errs.System(errs.New("restart: app has no latestRevisionName — is it still provisioning?"))
-		}
-		slog.Debug("restart: using current latest revision", "revision", rev)
 	}
 
 	if !yes {
-		fmt.Printf("\nrestart revision %s in %s?\n", rev, env)
+		fmt.Printf("\nrestart revision %s in %s?\n", rev, t.Env)
 		if !promptConfirm("proceed?") {
 			return errs.Usage(errs.New("restart: aborted by user"))
 		}
@@ -99,7 +73,7 @@ func Restart(ctx context.Context, c *cli.Command) error {
 	// can detect when they've all been replaced.
 	var baseline map[string]struct{}
 	if wait {
-		initial, err := ca.ListReplicas(ctx, sub, rg, name, rev)
+		initial, err := t.CA.ListReplicas(ctx, t.Sub, t.RG, t.Name, rev)
 		if err != nil {
 			return errs.System(errs.Wrap(err, "restart: list replicas (baseline for --wait)"))
 		}
@@ -107,8 +81,8 @@ func Restart(ctx context.Context, c *cli.Command) error {
 		slog.Debug("restart: captured baseline replicas", "count", len(baseline))
 	}
 
-	slog.Info("restarting revision", "app", name, "revision", rev, "env", env)
-	if err := ca.RestartRevision(ctx, sub, rg, name, rev); err != nil {
+	slog.Info("restarting revision", "app", t.Name, "revision", rev, "env", t.Env)
+	if err := t.CA.RestartRevision(ctx, t.Sub, t.RG, t.Name, rev); err != nil {
 		return errs.System(errs.Wrap(err, "restart"))
 	}
 
@@ -118,11 +92,11 @@ func Restart(ctx context.Context, c *cli.Command) error {
 	}
 
 	start := time.Now()
-	if err := waitForRestart(ctx, ca, sub, rg, name, rev, baseline, waitTimeout, streamLogs, color); err != nil {
+	if err := waitForRestart(ctx, t.CA, t.Sub, t.RG, t.Name, rev, baseline, waitTimeout, streamLogs, color); err != nil {
 		return errs.System(errs.Wrap(err, "restart: --wait"))
 	}
 	slog.Info("restart complete — all replicas replaced and Ready",
-		"app", name, "revision", rev,
+		"app", t.Name, "revision", rev,
 		"duration", time.Since(start).Round(time.Second))
 	return nil
 }

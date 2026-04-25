@@ -11,10 +11,8 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/investerra/lazure/internal/azureapi"
 	"github.com/investerra/lazure/internal/azurearm"
 	"github.com/investerra/lazure/internal/errs"
-	"github.com/investerra/lazure/internal/lazurecfg"
 )
 
 // RevisionsFlags are the flags for `lazure revisions`.
@@ -31,32 +29,16 @@ func RevisionsFlags() []cli.Flag {
 //
 // Feeds the rollback picker.
 func Revisions(ctx context.Context, c *cli.Command) error {
-	env := c.StringArg("env")
-	if env == "" {
-		return errs.Usage(errs.New("revisions: env argument is required"))
-	}
-	dir := c.String("dir")
 	limit := int(c.Int("limit"))
 	format := c.String("format")
-	slog.Debug("revisions: start", "env", env, "limit", limit, "format", format)
 
-	manifest, _, err := lazurecfg.LoadManifest(lazurecfg.LoadOptions{ProjectDir: dir, Env: env})
+	t, err := loadAzureTarget(c, "revisions")
 	if err != nil {
-		return errs.Usage(errs.Wrap(err, "revisions: load manifest"))
+		return err
 	}
-	sub := manifest.App.Identity.SubscriptionID()
-	if sub == "" {
-		return errs.Usage(errs.Errorf("revisions: could not derive subscription id from app.identity %q", manifest.App.Identity))
-	}
-	rg, name := manifest.App.ResourceGroup, manifest.App.Name
+	slog.Debug("revisions: start", "env", t.Env, "limit", limit, "format", format)
 
-	tokens, err := azureapi.NewTokenProvider()
-	if err != nil {
-		return errs.Auth(errs.Wrap(err, "revisions: auth"))
-	}
-	ca := azureapi.NewContainerAppsClient(tokens)
-
-	revs, err := ca.ListRevisions(ctx, sub, rg, name)
+	revs, err := t.CA.ListRevisions(ctx, t.Sub, t.RG, t.Name)
 	if err != nil {
 		return errs.System(errs.Wrap(err, "revisions: list"))
 	}
@@ -66,7 +48,7 @@ func Revisions(ctx context.Context, c *cli.Command) error {
 
 	switch format {
 	case "", "table":
-		return printRevisionsTable(env, name, revs)
+		return printRevisionsTable(t.Env, t.Name, revs)
 	case "json":
 		return printRevisionsJSON(revs)
 	default:

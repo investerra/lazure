@@ -13,10 +13,8 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/investerra/lazure/internal/azureapi"
 	"github.com/investerra/lazure/internal/azurearm"
 	"github.com/investerra/lazure/internal/errs"
-	"github.com/investerra/lazure/internal/lazurecfg"
 )
 
 // RollbackFlags are the flags for `lazure rollback`.
@@ -42,38 +40,22 @@ const rollbackPickerSize = 5
 // Without --to, presents an interactive picker over the last N
 // non-current revisions. With -y, --to is required (no prompt).
 func Rollback(ctx context.Context, c *cli.Command) error {
-	env := c.StringArg("env")
-	if env == "" {
-		return errs.Usage(errs.New("rollback: env argument is required"))
-	}
-	dir := c.String("dir")
 	to := c.String("to")
 	yes := c.Bool("yes")
 	wait := c.Bool("wait")
 	waitTimeout := c.Duration("wait-timeout")
 	streamLogs := c.Bool("logs")
 	color := shouldColor(c.Bool("no-color"))
+
+	t, err := loadAzureTarget(c, "rollback")
+	if err != nil {
+		return err
+	}
 	slog.Debug("rollback: start",
-		"env", env, "to", to, "yes", yes, "wait", wait, "logs", streamLogs)
-
-	manifest, _, err := lazurecfg.LoadManifest(lazurecfg.LoadOptions{ProjectDir: dir, Env: env})
-	if err != nil {
-		return errs.Usage(errs.Wrap(err, "rollback: load manifest"))
-	}
-	sub := manifest.App.Identity.SubscriptionID()
-	if sub == "" {
-		return errs.Usage(errs.Errorf("rollback: could not derive subscription id from app.identity %q", manifest.App.Identity))
-	}
-	rg, name := manifest.App.ResourceGroup, manifest.App.Name
-
-	tokens, err := azureapi.NewTokenProvider()
-	if err != nil {
-		return errs.Auth(errs.Wrap(err, "rollback: auth"))
-	}
-	ca := azureapi.NewContainerAppsClient(tokens)
+		"env", t.Env, "to", to, "yes", yes, "wait", wait, "logs", streamLogs)
 
 	slog.Debug("rollback: listing revisions")
-	revs, err := ca.ListRevisions(ctx, sub, rg, name)
+	revs, err := t.CA.ListRevisions(ctx, t.Sub, t.RG, t.Name)
 	if err != nil {
 		return errs.System(errs.Wrap(err, "rollback: list revisions"))
 	}
@@ -110,22 +92,22 @@ func Rollback(ctx context.Context, c *cli.Command) error {
 	traffic := []azurearm.TrafficEntry{
 		{Weight: 100, RevisionName: to},
 	}
-	slog.Info("rolling back", "app", name, "from", current, "to", to)
+	slog.Info("rolling back", "app", t.Name, "from", current, "to", to)
 	start := time.Now()
-	if _, err := ca.PatchTrafficAndWait(ctx, sub, rg, name, traffic, "Single"); err != nil {
+	if _, err := t.CA.PatchTrafficAndWait(ctx, t.Sub, t.RG, t.Name, traffic, "Single"); err != nil {
 		return errs.System(errs.Wrap(err, "rollback: patch traffic"))
 	}
 
 	slog.Info("rollback complete",
-		"app", name, "from", current, "to", to,
+		"app", t.Name, "from", current, "to", to,
 		"duration", time.Since(start).Round(time.Second))
 
 	if wait {
-		if err := waitForRevisionReady(ctx, ca, sub, rg, name, to, waitTimeout, streamLogs, color); err != nil {
+		if err := waitForRevisionReady(ctx, t.CA, t.Sub, t.RG, t.Name, to, waitTimeout, streamLogs, color); err != nil {
 			return errs.System(errs.Wrap(err, "rollback: --wait"))
 		}
 		slog.Info("rollback --wait complete — target revision's replicas Ready",
-			"app", name, "revision", to)
+			"app", t.Name, "revision", to)
 	}
 	return nil
 }
