@@ -222,6 +222,19 @@ Exits 0 if no drift, 1 if drift detected.`,
 				ShellComplete: cmd.CompleteEnvs,
 			},
 			{
+				Name:          "scale",
+				Usage:         "set replica bounds without editing the manifest",
+				Arguments:     envArg(),
+				Flags:         cmd.ScaleFlags(),
+				Action:        cmd.Scale,
+				ShellComplete: cmd.CompleteEnvs,
+				Description: `Examples:
+  lazure scale dev --replicas 3            pin to exactly 3 replicas
+  lazure scale dev --min 1 --max 10        bound between 1 and 10
+  lazure scale dev --max 20                raise ceiling, keep current min
+  lazure scale dev --replicas 0 -y         scale to zero (cost-saving)`,
+			},
+			{
 				Name:          "validate",
 				Usage:         "static pre-flight: render + struct validate + secret refs (no Azure calls)",
 				Arguments:     envArg(),

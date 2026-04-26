@@ -138,6 +138,40 @@ func (c *ContainerAppsClient) PatchTrafficAndWait(ctx context.Context, sub, rg, 
 	return c.waitForCompletion(ctx, sub, rg, name, resp, "PATCH")
 }
 
+// PatchScaleAndWait updates just the replica bounds on an existing
+// container app. Used by `lazure scale` for quick scale-up/down without
+// re-PUTing the whole manifest. Same sync/async handling as PutAndWait
+// + PatchTrafficAndWait.
+//
+// Pass minReplicas == 0 to allow scale-to-zero (Azure's default); pass
+// the same value for both to pin the replica count. Other manifest
+// fields (containers, ingress, scale.rules) are unaffected — ARM's
+// PATCH semantics merge.
+func (c *ContainerAppsClient) PatchScaleAndWait(ctx context.Context, sub, rg, name string, minReplicas, maxReplicas int) (*azurearm.ContainerApp, error) {
+	r, err := c.armRequest(ctx)
+	if err != nil {
+		return nil, err
+	}
+	url := c.base + containerAppPath(sub, rg, name)
+	body := map[string]any{
+		"properties": map[string]any{
+			"template": map[string]any{
+				"scale": map[string]any{
+					"minReplicas": minReplicas,
+					"maxReplicas": maxReplicas,
+				},
+			},
+		},
+	}
+	slog.Debug("containerapps: PATCH scale", "url", url, "min", minReplicas, "max", maxReplicas)
+	resp, err := r.SetBody(body).Patch(url)
+	if err != nil {
+		return nil, errs.Wrapf(err, "containerapps: PATCH scale %s/%s", rg, name)
+	}
+	slog.Debug("containerapps: PATCH scale response", "status", resp.StatusCode)
+	return c.waitForCompletion(ctx, sub, rg, name, resp, "PATCH")
+}
+
 // waitForCompletion handles the sync-or-async response dance shared by
 // PUT and PATCH. On sync (200/201), decodes the body and returns. On
 // async (202), polls Azure-AsyncOperation until Succeeded then fetches
