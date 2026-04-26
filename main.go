@@ -215,6 +215,20 @@ Exits 0 if no drift, 1 if drift detected.`,
 				ShellComplete: cmd.CompleteEnvs,
 			},
 			{
+				Name:          "ports",
+				Usage:         "show ingress URL + target port for an environment",
+				Arguments:     envArg(),
+				Action:        cmd.Ports,
+				ShellComplete: cmd.CompleteEnvs,
+			},
+			{
+				Name:          "validate",
+				Usage:         "static pre-flight: render + struct validate + secret refs (no Azure calls)",
+				Arguments:     envArg(),
+				Action:        cmd.Validate,
+				ShellComplete: cmd.CompleteEnvs,
+			},
+			{
 				Name:          "rollback",
 				Usage:         "shift traffic to a previous revision",
 				Arguments:     envArg(),
@@ -269,6 +283,17 @@ Exits 0 if no drift, 1 if drift detected.`,
   lazure init                             interactive (prompts for name etc.)
   lazure init --quiet --name api --resource-group dbx
   lazure init --force                     overwrite an existing deploy.yml`,
+			},
+			{
+				Name:  "env",
+				Usage: "inspect environments",
+				Commands: []*cli.Command{
+					{
+						Name:   "list",
+						Usage:  "print available envs (one per line)",
+						Action: cmd.EnvList,
+					},
+				},
 			},
 			{
 				Name:      "schema",
