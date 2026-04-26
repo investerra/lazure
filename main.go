@@ -235,6 +235,19 @@ Exits 0 if no drift, 1 if drift detected.`,
   lazure scale dev --replicas 0 -y         scale to zero (cost-saving)`,
 			},
 			{
+				Name:          "events",
+				Usage:         "show recent ARM activity log entries for the app",
+				Arguments:     envArg(),
+				Flags:         cmd.EventsFlags(),
+				Action:        cmd.Events,
+				ShellComplete: cmd.CompleteEnvs,
+				Description: `Examples:
+  lazure events dev                        last 24h, table output
+  lazure events dev --since=1h             last hour only
+  lazure events dev --since=168h           last 7 days
+  lazure events dev --format=json | jq     pipe-friendly`,
+			},
+			{
 				Name:          "validate",
 				Usage:         "static pre-flight: render + struct validate + secret refs (no Azure calls)",
 				Arguments:     envArg(),
