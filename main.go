@@ -319,6 +319,19 @@ Exits 0 if no drift, 1 if drift detected.`,
 						Usage:  "print available envs (one per line)",
 						Action: cmd.EnvList,
 					},
+					{
+						Name:   "diff",
+						Usage:  "matrix of vars + secret refs across all envs (catches asymmetries)",
+						Action: cmd.EnvDiff,
+						Description: `Examples:
+  lazure env diff                          show full vars + secrets matrix
+
+Marks:
+  ✓  defined / referenced and present
+  ✗  referenced in manifest but missing from SOPS file (deploy will fail)
+  ○  defined in SOPS but not referenced anywhere (orphan)
+  —  not applicable in this env`,
+					},
 				},
 			},
 			{
