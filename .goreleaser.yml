@@ -67,7 +67,5 @@ changelog:
       - "^style:"
 
 release:
-  # Draft releases let a human eyeball the notes before announcing.
-  # Flip to false once the workflow proves stable.
-  draft: true
+  draft: false
   name_template: "{{ .Tag }}"
