@@ -75,7 +75,11 @@ func Init(ctx context.Context, c *cli.Command) error {
 	if err := encryptEmptySecrets(dir, cfg.Envs, configPath); err != nil {
 		return errs.System(errs.Wrap(err, "init: encrypt empty secrets"))
 	}
-	if err := updateGitignore(".gitignore", []string{"envs/*.plain.yml", ".lazure/"}); err != nil {
+	envsGitignore := filepath.Join(dir, "envs", ".gitignore")
+	if err := updateGitignore(envsGitignore, envsGitignorePatterns()); err != nil {
+		return errs.System(errs.Wrapf(err, "init: update %s", envsGitignore))
+	}
+	if err := updateGitignore(".gitignore", []string{".lazure/"}); err != nil {
 		return errs.System(errs.Wrap(err, "init: update .gitignore"))
 	}
 
@@ -373,6 +377,19 @@ func composeDockerImage(acr, org, app string) string {
 		return fmt.Sprintf("%s/%s:{{ .Vars.git_commit }}", acr, app)
 	}
 	return fmt.Sprintf("%s/%s/%s:{{ .Vars.git_commit }}", acr, org, app)
+}
+
+// envsGitignorePatterns returns the ignore patterns Init writes to
+// deploy/envs/.gitignore. Lives next to the secrets files so it
+// covers anything that might be produced INSIDE the envs directory.
+// Kept narrow on purpose — primary hazard is `*.plain.yml`; `*.bak`
+// catches common editor backups that could otherwise contain
+// snapshotted plaintext if a user backs up an open decrypted file.
+func envsGitignorePatterns() []string {
+	return []string{
+		"*.plain.yml",
+		"*.bak",
+	}
 }
 
 // ---------- .gitignore ----------

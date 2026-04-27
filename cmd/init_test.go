@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -246,6 +247,15 @@ func TestParseGitRemote_Bogus(t *testing.T) {
 		if host != "" || org != "" || repo != "" {
 			t.Errorf("input %q: expected all-empty, got host=%q org=%q repo=%q", in, host, org, repo)
 		}
+	}
+}
+
+// ---------- envsGitignorePatterns ----------
+
+func TestEnvsGitignorePatterns_IncludesPlainYml(t *testing.T) {
+	patterns := envsGitignorePatterns()
+	if !slices.Contains(patterns, "*.plain.yml") {
+		t.Errorf("envsGitignorePatterns must include *.plain.yml; got %v", patterns)
 	}
 }
 
