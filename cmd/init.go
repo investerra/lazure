@@ -209,14 +209,12 @@ func scaffoldProject(dir string, cfg initConfig, inf projectInferences) error {
 		if err := os.WriteFile(varsPath, []byte(body), 0o644); err != nil {
 			return err
 		}
+		plainPath := filepath.Join(envsDir, env+".secrets.plain.yml")
+		if err := os.WriteFile(plainPath, []byte(renderSecretsPlain(env)), 0o600); err != nil {
+			return err
+		}
 	}
-	// Plaintext secrets sidecar for the first env only — it's a
-	// throwaway that the user replaces with `lazure secrets edit` on
-	// first run. Creating it for every env would force them to run
-	// edit on every env just to clear the TODO.
-	firstEnv := cfg.Envs[0]
-	plainPath := filepath.Join(envsDir, firstEnv+".secrets.plain.yml")
-	return os.WriteFile(plainPath, []byte(renderSecretsPlain(firstEnv)), 0o600)
+	return nil
 }
 
 // schemaWithNewline returns the embedded schema bytes with a trailing

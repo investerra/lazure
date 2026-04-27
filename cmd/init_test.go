@@ -296,19 +296,14 @@ func TestScaffoldProject_CreatesExpectedFiles(t *testing.T) {
 		"envs/dev.vars.yml",
 		"envs/uat.vars.yml",
 		"envs/prd.vars.yml",
-		"envs/dev.secrets.plain.yml", // first env only
+		"envs/dev.secrets.plain.yml",
+		"envs/uat.secrets.plain.yml",
+		"envs/prd.secrets.plain.yml",
 	}
 	for _, rel := range expect {
 		p := filepath.Join(dir, rel)
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("missing file %s: %v", rel, err)
-		}
-	}
-
-	// uat/prd must NOT get a secrets.plain.yml (only first env does).
-	for _, rel := range []string{"envs/uat.secrets.plain.yml", "envs/prd.secrets.plain.yml"} {
-		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
-			t.Errorf("unexpected file created: %s", rel)
 		}
 	}
 }
