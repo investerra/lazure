@@ -243,7 +243,7 @@ func SecretsEdit(ctx context.Context, c *cli.Command) error {
 	}
 	slog.Debug("secrets edit: change detected, re-encrypting")
 
-	if err := sopsio.Encrypt(plainPath, encPath); err != nil {
+	if err := sopsio.Encrypt(plainPath, encPath, filepath.Join(filepath.Dir(c.String("dir")), ".sops.yaml")); err != nil {
 		return errs.System(errs.Wrap(err, "secrets edit: encrypt"))
 	}
 	slog.Debug("secrets edit: re-encrypted successfully")
@@ -338,7 +338,7 @@ func SecretsEncrypt(ctx context.Context, c *cli.Command) error {
 	if _, err := os.Stat(plainPath); err != nil {
 		return errs.Usage(errs.Wrapf(err, "secrets encrypt: plain file %q not found", plainPath))
 	}
-	if err := sopsio.Encrypt(plainPath, encPath); err != nil {
+	if err := sopsio.Encrypt(plainPath, encPath, filepath.Join(filepath.Dir(c.String("dir")), ".sops.yaml")); err != nil {
 		return errs.System(errs.Wrap(err, "secrets encrypt"))
 	}
 	if !keep {

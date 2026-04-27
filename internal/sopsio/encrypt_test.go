@@ -56,8 +56,9 @@ func TestEncrypt_Integration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Re-encrypt back over workingEnc.
-	if err := Encrypt(plainPath, workingEnc); err != nil {
+	// Re-encrypt back over workingEnc. configPath is irrelevant on the
+	// re-encrypt path (existing file's metadata is the source of truth).
+	if err := Encrypt(plainPath, workingEnc, ""); err != nil {
 		t.Fatalf("Encrypt failed: %v", err)
 	}
 
@@ -88,19 +89,23 @@ func TestEncrypt_Integration(t *testing.T) {
 	}
 }
 
-func TestEncrypt_MissingExistingFile(t *testing.T) {
+// TestEncrypt_BootstrapWithoutConfig verifies that the bootstrap
+// path errors helpfully when neither the encrypted file nor a
+// .sops.yaml exists — the user has to wire up the config before
+// lazure can encrypt anything for the first time.
+func TestEncrypt_BootstrapWithoutConfig(t *testing.T) {
 	dir := t.TempDir()
 	plainPath := filepath.Join(dir, "plain.yml")
 	if err := os.WriteFile(plainPath, []byte("foo: bar\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	err := Encrypt(plainPath, filepath.Join(dir, "doesnotexist.yml"))
+	err := Encrypt(plainPath, filepath.Join(dir, "doesnotexist.yml"), filepath.Join(dir, ".sops.yaml"))
 	if err == nil {
-		t.Fatal("expected error for missing encrypted file")
+		t.Fatal("expected error for missing config")
 	}
-	if !strings.Contains(err.Error(), "load existing") {
-		t.Errorf("error = %q, want 'load existing'", err.Error())
+	if !strings.Contains(err.Error(), ".sops.yaml") {
+		t.Errorf("error = %q, want it to mention .sops.yaml", err.Error())
 	}
 }
 
@@ -115,7 +120,7 @@ func TestEncrypt_MissingPlainFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := Encrypt(filepath.Join(dir, "nonexistent-plain.yml"), workingEnc)
+	err := Encrypt(filepath.Join(dir, "nonexistent-plain.yml"), workingEnc, "")
 	if err == nil {
 		t.Fatal("expected error for missing plain file")
 	}
