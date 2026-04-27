@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -31,6 +33,13 @@ func SecretsCommand() *cli.Command {
 		Name:  "secrets",
 		Usage: "manage encrypted secrets",
 		Commands: []*cli.Command{
+			{
+				Name:          "new",
+				Usage:         "create an empty encrypted secrets file (errors if file already exists)",
+				Arguments:     envArgs(),
+				Action:        SecretsNew,
+				ShellComplete: CompleteEnvs,
+			},
 			{
 				Name:      "view",
 				Usage:     "view secrets (redacted by default; --reveal to show full values)",
@@ -243,7 +252,7 @@ func SecretsEdit(ctx context.Context, c *cli.Command) error {
 	}
 	slog.Debug("secrets edit: change detected, re-encrypting")
 
-	if err := sopsio.Encrypt(plainPath, encPath, filepath.Join(filepath.Dir(c.String("dir")), ".sops.yaml")); err != nil {
+	if err := sopsio.Encrypt(plainPath, encPath, sopsConfigPath(c.String("dir"))); err != nil {
 		return errs.System(errs.Wrap(err, "secrets edit: encrypt"))
 	}
 	slog.Debug("secrets edit: re-encrypted successfully")
@@ -319,6 +328,89 @@ func SecretsDecrypt(ctx context.Context, c *cli.Command) error {
 	return nil
 }
 
+// ---------- new ----------
+
+// SecretsNew implements `lazure secrets new <env>`. Scaffolds an
+// empty encrypted secrets file. Errors if the encrypted file already
+// exists — the caller should `lazure secrets edit` instead, which is
+// the safe way to mutate existing content.
+//
+// On success, removes any stale envs/<env>.secrets.plain.yml left
+// over from older `lazure init` runs (current init no longer writes
+// one, but kyc-style legacy state may still have them).
+func SecretsNew(ctx context.Context, c *cli.Command) error {
+	env, encPath, err := secretsEnvPath(c)
+	if err != nil {
+		return err
+	}
+	slog.Debug("secrets new: start", "env", env, "path", encPath)
+
+	if _, err := os.Stat(encPath); err == nil {
+		return errs.Usage(errs.Errorf("secrets new: %s already exists", encPath))
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return errs.System(errs.Wrapf(err, "secrets new: stat %s", encPath))
+	}
+
+	configPath := sopsConfigPath(c.String("dir"))
+	if err := createEmptyEncryptedSecrets(encPath, configPath); err != nil {
+		return errs.System(errs.Wrap(err, "secrets new"))
+	}
+
+	plainPath := strings.TrimSuffix(encPath, ".yml") + ".plain.yml"
+	if err := os.Remove(plainPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		slog.Warn("secrets new: encrypted OK but failed to clean up legacy plain sidecar",
+			"path", plainPath, "error", err)
+	}
+
+	slog.Info("secrets file created", "env", env, "path", encPath)
+	return nil
+}
+
+// createEmptyEncryptedSecrets writes an empty encrypted SOPS file at
+// encPath, using configPath (.sops.yaml) for master keys. Shared by
+// `secrets new` and `init`. Errors if encPath already exists — never
+// overwrites, because sopsio.Encrypt would otherwise route an
+// existing path through the re-encrypt branch and silently replace
+// real secrets with `{}`.
+//
+// Uses `{}` as the seed plaintext: a comment-only YAML errors with
+// EOF, truly empty bytes give zero branches, but `{}` parses to one
+// empty map — exactly what `sops` itself produces for an empty file.
+func createEmptyEncryptedSecrets(encPath, configPath string) error {
+	if _, err := os.Stat(encPath); err == nil {
+		return errs.Errorf("refusing to overwrite existing %s with empty content", encPath)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return errs.Wrapf(err, "stat %s", encPath)
+	}
+
+	envsDir := filepath.Dir(encPath)
+	if err := os.MkdirAll(envsDir, 0o755); err != nil {
+		return errs.Wrap(err, "mkdir envs")
+	}
+	tmp, err := os.CreateTemp(envsDir, ".lazure-new-*.plain.yml")
+	if err != nil {
+		return errs.Wrap(err, "tmp")
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.WriteString("{}\n"); err != nil {
+		_ = tmp.Close()
+		return errs.Wrap(err, "write tmp")
+	}
+	if err := tmp.Close(); err != nil {
+		return errs.Wrap(err, "close tmp")
+	}
+	return sopsio.Encrypt(tmpPath, encPath, configPath)
+}
+
+// sopsConfigPath returns the conventional .sops.yaml location given
+// the project's `--dir` value: parent of the deploy directory.
+// filepath.Clean normalizes trailing slashes (`deploy/` → `deploy`)
+// so `--dir=deploy/` resolves the same as `--dir=deploy`.
+func sopsConfigPath(dir string) string {
+	return filepath.Join(filepath.Dir(filepath.Clean(dir)), ".sops.yaml")
+}
+
 // ---------- encrypt ----------
 
 // SecretsEncrypt implements `lazure secrets encrypt <env>`. Encrypts
@@ -338,7 +430,7 @@ func SecretsEncrypt(ctx context.Context, c *cli.Command) error {
 	if _, err := os.Stat(plainPath); err != nil {
 		return errs.Usage(errs.Wrapf(err, "secrets encrypt: plain file %q not found", plainPath))
 	}
-	if err := sopsio.Encrypt(plainPath, encPath, filepath.Join(filepath.Dir(c.String("dir")), ".sops.yaml")); err != nil {
+	if err := sopsio.Encrypt(plainPath, encPath, sopsConfigPath(c.String("dir"))); err != nil {
 		return errs.System(errs.Wrap(err, "secrets encrypt"))
 	}
 	if !keep {

@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/urfave/cli/v3"
 )
 
 // ---------- parseEnvsCSV ----------
@@ -246,19 +249,6 @@ func TestParseGitRemote_Bogus(t *testing.T) {
 	}
 }
 
-func TestRenderSecretsPlain_HintsEditCommand(t *testing.T) {
-	got := renderSecretsPlain("dev")
-	for _, want := range []string{
-		"lazure secrets edit dev",
-		"kebab-case",
-		"secret: name-of-secret",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("missing %q in:\n%s", want, got)
-		}
-	}
-}
-
 // ---------- gitignorePatternsToAppend ----------
 
 func TestGitignorePatternsToAppend_EmptyFile(t *testing.T) {
@@ -291,6 +281,74 @@ func TestGitignorePatternsToAppend_PreservesOrder(t *testing.T) {
 	}
 }
 
+// ---------- Init guards ----------
+
+// TestInit_ErrorsWithoutSopsConfig verifies the .sops.yaml guard
+// fires before any scaffolding work. We don't need Azure creds to
+// hit this path — the check is os.Stat-only.
+func TestInit_ErrorsWithoutSopsConfig(t *testing.T) {
+	root := t.TempDir()
+	deployDir := filepath.Join(root, "deploy")
+
+	var actionErr error
+	app := &cli.Command{
+		Name: "lazure",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "dir", Value: deployDir},
+		},
+		Commands: []*cli.Command{
+			{
+				Name: "init",
+				Flags: append(InitFlags(),
+					&cli.StringFlag{Name: "name", Value: "myapp"},
+					&cli.StringFlag{Name: "resource-group", Value: "rg"},
+					&cli.BoolFlag{Name: "quiet", Value: true},
+				),
+				Action: func(ctx context.Context, c *cli.Command) error {
+					actionErr = Init(ctx, c)
+					return nil
+				},
+			},
+		},
+	}
+	if err := app.Run(context.Background(),
+		[]string{"lazure", "--dir", deployDir, "init", "--name", "myapp", "--resource-group", "rg", "--quiet"}); err != nil {
+		t.Fatal(err)
+	}
+	if actionErr == nil || !strings.Contains(actionErr.Error(), ".sops.yaml") {
+		t.Errorf("got %v, want error mentioning .sops.yaml", actionErr)
+	}
+}
+
+// TestEncryptEmptySecrets_SkipsExistingFiles is the regression test
+// for the data-loss bug: `lazure init --force` must NOT overwrite
+// previously-set encrypted secrets, even though it re-runs the
+// encryption phase.
+func TestEncryptEmptySecrets_SkipsExistingFiles(t *testing.T) {
+	dir := t.TempDir()
+	envsDir := filepath.Join(dir, "envs")
+	if err := os.MkdirAll(envsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	encPath := filepath.Join(envsDir, "dev.secrets.yml")
+	original := []byte("existing-encrypted-content")
+	if err := os.WriteFile(encPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// configPath would only matter if the helper tried to encrypt;
+	// passing a definitely-missing path catches that mistake fast.
+	configPath := filepath.Join(dir, "definitely-missing-.sops.yaml")
+	if err := encryptEmptySecrets(dir, []string{"dev"}, configPath); err != nil {
+		t.Fatalf("encryptEmptySecrets returned %v; should silently skip and succeed", err)
+	}
+
+	got, _ := os.ReadFile(encPath)
+	if string(got) != string(original) {
+		t.Errorf("existing secrets were modified:\n got %q\nwant %q", got, original)
+	}
+}
+
 // ---------- scaffoldProject ----------
 
 func TestScaffoldProject_CreatesExpectedFiles(t *testing.T) {
@@ -309,14 +367,23 @@ func TestScaffoldProject_CreatesExpectedFiles(t *testing.T) {
 		"envs/dev.vars.yml",
 		"envs/uat.vars.yml",
 		"envs/prd.vars.yml",
-		"envs/dev.secrets.plain.yml",
-		"envs/uat.secrets.plain.yml",
-		"envs/prd.secrets.plain.yml",
 	}
 	for _, rel := range expect {
 		p := filepath.Join(dir, rel)
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("missing file %s: %v", rel, err)
+		}
+	}
+
+	// scaffoldProject no longer touches secrets — the encrypted SOPS
+	// files are written by encryptEmptySecrets, exercised separately
+	// via integration testing (needs Azure creds).
+	for _, rel := range []string{
+		"envs/dev.secrets.yml",
+		"envs/dev.secrets.plain.yml",
+	} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
+			t.Errorf("scaffoldProject should not create %s", rel)
 		}
 	}
 }

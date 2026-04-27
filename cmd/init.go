@@ -3,7 +3,9 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	neturl "net/url"
 	"os"
@@ -51,6 +53,13 @@ func Init(ctx context.Context, c *cli.Command) error {
 		return errs.Usage(errs.Errorf("init: %s already exists — run with --force to overwrite", manifestPath))
 	}
 
+	configPath := sopsConfigPath(dir)
+	if _, err := os.Stat(configPath); err != nil {
+		return errs.Usage(errs.Errorf(
+			"init: %s not found — create it with creation_rules pointing to your Azure Key Vault key, then re-run lazure init",
+			configPath))
+	}
+
 	cfg, err := collectInitConfig(c, quiet)
 	if err != nil {
 		return errs.Usage(err)
@@ -63,12 +72,39 @@ func Init(ctx context.Context, c *cli.Command) error {
 	if err := scaffoldProject(dir, cfg, inferences); err != nil {
 		return errs.System(errs.Wrap(err, "init: write project"))
 	}
+	if err := encryptEmptySecrets(dir, cfg.Envs, configPath); err != nil {
+		return errs.System(errs.Wrap(err, "init: encrypt empty secrets"))
+	}
 	if err := updateGitignore(".gitignore", []string{"envs/*.plain.yml", ".lazure/"}); err != nil {
 		return errs.System(errs.Wrap(err, "init: update .gitignore"))
 	}
 
 	printInferenceSummary(inferences)
 	printNextSteps(cfg, dir)
+	return nil
+}
+
+// encryptEmptySecrets writes one empty encrypted SOPS file per env
+// using configPath for master keys. Skips envs whose secrets file
+// already exists — `lazure init --force` is for regenerating the
+// manifest scaffolding, NOT for wiping previously-set secrets, and
+// sopsio.Encrypt would otherwise route the existing path through
+// the re-encrypt branch and replace real content with `{}`.
+func encryptEmptySecrets(dir string, envs []string, configPath string) error {
+	envsDir := filepath.Join(dir, "envs")
+	for _, env := range envs {
+		encPath := filepath.Join(envsDir, env+".secrets.yml")
+		if _, err := os.Stat(encPath); err == nil {
+			slog.Info("init: skipping existing secrets file", "env", env, "path", encPath)
+			continue
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return errs.Wrapf(err, "stat %s", encPath)
+		}
+		if err := createEmptyEncryptedSecrets(encPath, configPath); err != nil {
+			return errs.Wrapf(err, "env %s", env)
+		}
+		slog.Debug("init: encrypted empty secrets", "env", env, "path", encPath)
+	}
 	return nil
 }
 
@@ -212,10 +248,6 @@ func scaffoldProject(dir string, cfg initConfig, inf projectInferences) error {
 		if err := os.WriteFile(varsPath, []byte(body), 0o644); err != nil {
 			return err
 		}
-		plainPath := filepath.Join(envsDir, env+".secrets.plain.yml")
-		if err := os.WriteFile(plainPath, []byte(renderSecretsPlain(env)), 0o600); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -343,22 +375,6 @@ func composeDockerImage(acr, org, app string) string {
 	return fmt.Sprintf("%s/%s/%s:{{ .Vars.git_commit }}", acr, org, app)
 }
 
-func renderSecretsPlain(env string) string {
-	return fmt.Sprintf(`# deploy/envs/%[1]s.secrets.plain.yml
-#
-# This is a throwaway plaintext file — fill in secrets below, then run:
-#   lazure secrets edit %[1]s
-# which will encrypt them to %[1]s.secrets.yml and remove this file.
-#
-# Secret names should be kebab-case; values are strings.
-# Reference them in deploy.yml with { secret: name-of-secret }.
-#
-# Example:
-# database-url: "postgresql://user:pass@host:5432/db"
-# redis-url: "redis://host:6379"
-`, env)
-}
-
 // ---------- .gitignore ----------
 
 // updateGitignore creates the file if absent or appends any missing
@@ -418,7 +434,7 @@ func printNextSteps(cfg initConfig, dir string) {
 	fmt.Printf("\nlazure project scaffolded in %s/\n\n", dir)
 	fmt.Printf("next steps:\n")
 	fmt.Printf("  1. edit deploy/envs/*.vars.yml — fill in the TODO IDs\n")
-	fmt.Printf("  2. lazure secrets edit %s    # encrypt your first env's secrets\n", first)
+	fmt.Printf("  2. lazure secrets edit %s    # add your first env's secrets\n", first)
 	fmt.Printf("  3. lazure render %s            # preview the ARM output\n", first)
 	fmt.Printf("  4. lazure doctor                 # run preflight checks\n")
 	fmt.Printf("  5. lazure deploy %s            # ship it\n\n", first)

@@ -176,6 +176,93 @@ func TestSecretsEnvPath_MissingEnv(t *testing.T) {
 	_ = app.Run(context.Background(), []string{"lazure", "secrets"})
 }
 
+// ---------- sopsConfigPath ----------
+
+// Trailing slashes on --dir would naively make filepath.Dir return
+// the dir itself rather than its parent, sending us to look for the
+// .sops.yaml *inside* the deploy directory. filepath.Clean fixes it.
+func TestSopsConfigPath_NormalizesTrailingSlash(t *testing.T) {
+	cases := []struct {
+		dir, want string
+	}{
+		{"deploy", filepath.Join(".", ".sops.yaml")},
+		{"deploy/", filepath.Join(".", ".sops.yaml")},
+		{".", filepath.Join(".", ".sops.yaml")},
+		{"./deploy", filepath.Join(".", ".sops.yaml")},
+		{"/abs/path/deploy", filepath.Join("/abs/path", ".sops.yaml")},
+		{"/abs/path/deploy/", filepath.Join("/abs/path", ".sops.yaml")},
+	}
+	for _, tc := range cases {
+		if got := sopsConfigPath(tc.dir); got != tc.want {
+			t.Errorf("sopsConfigPath(%q) = %q, want %q", tc.dir, got, tc.want)
+		}
+	}
+}
+
+// ---------- createEmptyEncryptedSecrets ----------
+
+// Refusing to overwrite is a data-loss guard: sopsio.Encrypt routes
+// existing paths through the re-encrypt branch which would silently
+// replace real content with `{}`.
+func TestCreateEmptyEncryptedSecrets_RefusesToOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	encPath := filepath.Join(dir, "dev.secrets.yml")
+	original := []byte("preexisting-encrypted-content")
+	if err := os.WriteFile(encPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := createEmptyEncryptedSecrets(encPath, filepath.Join(dir, ".sops.yaml"))
+	if err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
+		t.Fatalf("got %v, want error containing 'refusing to overwrite'", err)
+	}
+
+	got, _ := os.ReadFile(encPath)
+	if string(got) != string(original) {
+		t.Errorf("file was modified despite the guard:\n got %q\nwant %q", got, original)
+	}
+}
+
+// ---------- new ----------
+
+// TestSecretsNew_ErrorsWhenFileExists asserts the existence guard
+// fires before any sops/Azure work, so this test runs without creds.
+func TestSecretsNew_ErrorsWhenFileExists(t *testing.T) {
+	dir := t.TempDir()
+	envsDir := filepath.Join(dir, "deploy", "envs")
+	if err := os.MkdirAll(envsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	encPath := filepath.Join(envsDir, "dev.secrets.yml")
+	if err := os.WriteFile(encPath, []byte("preexisting"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var actionErr error
+	app := &cli.Command{
+		Name: "lazure",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "dir", Value: filepath.Join(dir, "deploy")},
+		},
+		Commands: []*cli.Command{
+			{
+				Name:      "secrets",
+				Arguments: []cli.Argument{&cli.StringArg{Name: "env"}},
+				Action: func(ctx context.Context, c *cli.Command) error {
+					actionErr = SecretsNew(ctx, c)
+					return nil
+				},
+			},
+		},
+	}
+	if err := app.Run(context.Background(), []string{"lazure", "--dir", filepath.Join(dir, "deploy"), "secrets", "dev"}); err != nil {
+		t.Fatal(err)
+	}
+	if actionErr == nil || !strings.Contains(actionErr.Error(), "already exists") {
+		t.Errorf("got %v, want error containing 'already exists'", actionErr)
+	}
+}
+
 // ---------- view (integration) ----------
 
 // TestSecretsView_Integration runs the full view command against the
