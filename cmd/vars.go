@@ -54,6 +54,16 @@ func VarsCommand() *cli.Command {
 				Action:        VarsVerify,
 				ShellComplete: CompleteEnvs,
 			},
+			{
+				Name:      "export",
+				Usage:     "print plain-string env vars from deploy.yml as `export KEY=VAL` lines",
+				Arguments: envArgs(),
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "container", Usage: "container name (default: first non-init container)"},
+				},
+				Action:        VarsExport,
+				ShellComplete: CompleteEnvs,
+			},
 		},
 	}
 }

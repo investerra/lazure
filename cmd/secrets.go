@@ -59,6 +59,16 @@ func SecretsCommand() *cli.Command {
 				ShellComplete: CompleteEnvs,
 			},
 			{
+				Name:      "export",
+				Usage:     "print decrypted secrets as `export KEY=VAL` lines (only env vars referenced in deploy.yml)",
+				Arguments: envArgs(),
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "container", Usage: "container name (default: first non-init container)"},
+				},
+				Action:        SecretsExport,
+				ShellComplete: CompleteEnvs,
+			},
+			{
 				Name:      "decrypt",
 				Usage:     "decrypt to envs/<env>.secrets.plain.yml",
 				Arguments: envArgs(),

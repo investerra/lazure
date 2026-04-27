@@ -163,6 +163,37 @@ func newApp() *cli.Command {
 Exits 0 if no drift, 1 if drift detected.`,
 			},
 			{
+				Name:          "rollout",
+				Usage:         "build + push + deploy in one step",
+				Arguments:     envArg(),
+				Flags:         cmd.RolloutFlags(),
+				Action:        cmd.Rollout,
+				ShellComplete: cmd.CompleteEnvs,
+				Description: `Examples:
+  lazure rollout dev                      build + push + deploy
+  lazure rollout dev -y                   non-interactive deploy
+  lazure rollout dev --no-build           skip build, deploy already-pushed image
+  lazure rollout dev --pull               always pull base images during build`,
+			},
+			{
+				Name:          "build",
+				Usage:         "build (and optionally push) the docker image for an environment",
+				Arguments:     envArg(),
+				Flags:         cmd.BuildFlags(),
+				Action:        cmd.Build,
+				ShellComplete: cmd.CompleteEnvs,
+				Description: `Examples:
+  lazure build dev                        build with auto-injected build-args
+  lazure build dev --pull                 always pull base images
+  lazure build dev --push                 build then docker push to ACR
+  lazure build dev --build-arg KEY=VAL    pass extra --build-arg
+  lazure build dev --secret id=tok,env=GH pass docker build secrets
+
+Auto-injected build-args (every build): GIT_COMMIT, APP_VERSION,
+GIT_BRANCH, BUILD_DATE. Image tag comes from the env's docker_image
+var; ACR registry from acr_server.`,
+			},
+			{
 				Name:   "release",
 				Usage:  "cut a calver tag and push",
 				Flags:  cmd.ReleaseFlags(),
