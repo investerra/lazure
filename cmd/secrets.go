@@ -50,6 +50,26 @@ func SecretsCommand() *cli.Command {
 				ShellComplete: CompleteEnvs,
 			},
 			{
+				Name:      "decrypt",
+				Usage:     "decrypt to envs/<env>.secrets.plain.yml",
+				Arguments: envArgs(),
+				Flags: []cli.Flag{
+					&cli.BoolFlag{Name: "force", Usage: "overwrite an existing plain file"},
+				},
+				Action:        SecretsDecrypt,
+				ShellComplete: CompleteEnvs,
+			},
+			{
+				Name:      "encrypt",
+				Usage:     "encrypt envs/<env>.secrets.plain.yml back to .secrets.yml",
+				Arguments: envArgs(),
+				Flags: []cli.Flag{
+					&cli.BoolFlag{Name: "keep", Usage: "keep the plain file after successful encryption"},
+				},
+				Action:        SecretsEncrypt,
+				ShellComplete: CompleteEnvs,
+			},
+			{
 				Name:      "verify",
 				Usage:     "check that every {secret: X} reference in the manifest exists in SOPS",
 				Arguments: envArgs(),
@@ -261,6 +281,73 @@ func marshalPlainSecrets(secrets map[string]string) ([]byte, error) {
 		buf.WriteString("\n")
 	}
 	return []byte(buf.String()), nil
+}
+
+// ---------- decrypt ----------
+
+// SecretsDecrypt implements `lazure secrets decrypt <env>`. Writes
+// envs/<env>.secrets.plain.yml from the encrypted file. Refuses to
+// overwrite an existing plain file unless --force — silently
+// clobbering would lose any in-progress edits the user hasn't
+// re-encrypted yet.
+func SecretsDecrypt(ctx context.Context, c *cli.Command) error {
+	env, encPath, err := secretsEnvPath(c)
+	if err != nil {
+		return err
+	}
+	plainPath := strings.TrimSuffix(encPath, ".yml") + ".plain.yml"
+	force := c.Bool("force")
+	slog.Debug("secrets decrypt: start", "env", env, "encrypted", encPath, "plain", plainPath, "force", force)
+
+	if _, err := os.Stat(plainPath); err == nil && !force {
+		return errs.Usage(errs.Errorf(
+			"plain file %q already exists; pass --force to overwrite", plainPath))
+	}
+
+	secrets, err := sopsio.Decrypt(encPath)
+	if err != nil {
+		return errs.Usage(errs.Wrap(err, "secrets decrypt"))
+	}
+	plainContent, err := marshalPlainSecrets(secrets)
+	if err != nil {
+		return errs.System(errs.Wrap(err, "secrets decrypt: format plain"))
+	}
+	if err := os.WriteFile(plainPath, plainContent, 0o600); err != nil {
+		return errs.System(errs.Wrapf(err, "secrets decrypt: write %s", plainPath))
+	}
+	slog.Info("secrets decrypted", "env", env, "path", plainPath, "count", len(secrets))
+	return nil
+}
+
+// ---------- encrypt ----------
+
+// SecretsEncrypt implements `lazure secrets encrypt <env>`. Encrypts
+// envs/<env>.secrets.plain.yml back into the .secrets.yml file,
+// reusing the existing master-key metadata. Deletes the plain file on
+// success unless --keep is passed — leaving plaintext lying around
+// is the same hazard `secrets edit` already guards against.
+func SecretsEncrypt(ctx context.Context, c *cli.Command) error {
+	env, encPath, err := secretsEnvPath(c)
+	if err != nil {
+		return err
+	}
+	plainPath := strings.TrimSuffix(encPath, ".yml") + ".plain.yml"
+	keep := c.Bool("keep")
+	slog.Debug("secrets encrypt: start", "env", env, "encrypted", encPath, "plain", plainPath, "keep", keep)
+
+	if _, err := os.Stat(plainPath); err != nil {
+		return errs.Usage(errs.Wrapf(err, "secrets encrypt: plain file %q not found", plainPath))
+	}
+	if err := sopsio.Encrypt(plainPath, encPath); err != nil {
+		return errs.System(errs.Wrap(err, "secrets encrypt"))
+	}
+	if !keep {
+		if err := os.Remove(plainPath); err != nil {
+			slog.Warn("secrets encrypt: encrypted OK but failed to clean up plain file", "path", plainPath, "error", err)
+		}
+	}
+	slog.Info("secrets encrypted", "env", env, "path", encPath)
+	return nil
 }
 
 // ---------- verify ----------
