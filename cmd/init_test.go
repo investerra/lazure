@@ -187,6 +187,19 @@ func TestComposeDockerImage_NoApp(t *testing.T) {
 	}
 }
 
+// ---------- inferAppNameFromCwd ----------
+
+func TestInferAppNameFromCwd_UsesBasename(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "my-app")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	if got := inferAppNameFromCwd(); got != "my-app" {
+		t.Errorf("got %q, want %q", got, "my-app")
+	}
+}
+
 // ---------- parseGitRemote ----------
 
 func TestParseGitRemote_HTTPS(t *testing.T) {

@@ -92,6 +92,9 @@ func collectInitConfig(c *cli.Command, quiet bool) (initConfig, error) {
 		Location:      c.String("location"),
 		ResourceGroup: c.String("resource-group"),
 	}
+	if cfg.Name == "" {
+		cfg.Name = inferAppNameFromCwd()
+	}
 	envs, err := parseEnvsCSV(c.String("envs"))
 	if err != nil {
 		return initConfig{}, errs.Wrap(err, "init: --envs")
@@ -489,6 +492,22 @@ func singleAzID(ctx context.Context, args ...string) string {
 		return ""
 	}
 	return nonEmpty[0]
+}
+
+// inferAppNameFromCwd returns the basename of the current working
+// directory as a best-effort default for the app name. Returns "" on
+// any error or for non-meaningful paths (root, ".", empty), so the
+// caller falls through to a prompt or --name flag.
+func inferAppNameFromCwd() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	base := filepath.Base(cwd)
+	if base == "" || base == "." || base == "/" {
+		return ""
+	}
+	return base
 }
 
 // inferGitOrg extracts the org segment from `git remote get-url origin`.
