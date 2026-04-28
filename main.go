@@ -71,16 +71,17 @@ func main() {
 		// already wrote its own diagnostics to inherited stderr; adding
 		// a lazure-prefixed line on top would be noise.
 		if !errs.IsSilent(err) {
-			// --log-level=debug prints the full %+v stack trace chain
-			// that pkg/errors records; otherwise a one-line message.
-			if slog.Default().Enabled(ctx, slog.LevelDebug) {
-				slog.Error(fmt.Sprintf("%+v", err))
-			} else {
-				slog.Error(err.Error())
-			}
+			slog.Error(topLevelErrorMessage(err, false))
 		}
 		os.Exit(errs.Code(err))
 	}
+}
+
+func topLevelErrorMessage(err error, _ bool) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func newApp() *cli.Command {
@@ -150,6 +151,7 @@ func newApp() *cli.Command {
   lazure deploy dev                       interactive, with confirm
   lazure deploy dev -y                    non-interactive (CI)
   lazure deploy dev --wait --logs         block until live + tail logs
+  lazure deploy dev --force               force a new revision with a timestamp env
   lazure deploy dev --print               preview ARM payload first`,
 			},
 			{
@@ -217,6 +219,7 @@ var; ACR registry from acr_server.`,
   lazure release                          interactive (preview + confirm)
   lazure release -y                       non-interactive
   lazure release --wait                   tail GH Actions until done
+  lazure release --force                  include a force redeploy timestamp marker
   lazure release --dry-run                show plan, exit without push`,
 			},
 			{

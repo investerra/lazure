@@ -426,7 +426,7 @@ func (c *ContainerAppsClient) pollAsyncOp(ctx context.Context, url string) error
 			return nil
 		case "Failed", "Canceled":
 			return errs.Errorf("containerapps: async operation %s: %s",
-				opStatus.Status, string(opStatus.Error))
+				opStatus.Status, formatAsyncAzureError(opStatus.Error))
 		case "InProgress", "Running", "Accepted", "":
 			// keep polling
 		default:
@@ -527,4 +527,42 @@ func ensureAPIVersion(rawURL string) string {
 		sep = "&"
 	}
 	return rawURL + sep + "api-version=" + armAPIVersion
+}
+
+type asyncAzureErrorBody struct {
+	Code    string                `json:"code"`
+	Message string                `json:"message"`
+	Details []asyncAzureErrorBody `json:"details"`
+}
+
+func formatAsyncAzureError(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return "(no error details returned by Azure)"
+	}
+
+	var body asyncAzureErrorBody
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return string(raw)
+	}
+
+	parts := collectAsyncAzureErrorMessages(body)
+	if len(parts) == 0 {
+		return string(raw)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func collectAsyncAzureErrorMessages(body asyncAzureErrorBody) []string {
+	var parts []string
+	if body.Message != "" {
+		if body.Code != "" {
+			parts = append(parts, body.Code+": "+body.Message)
+		} else {
+			parts = append(parts, body.Message)
+		}
+	}
+	for _, detail := range body.Details {
+		parts = append(parts, collectAsyncAzureErrorMessages(detail)...)
+	}
+	return parts
 }

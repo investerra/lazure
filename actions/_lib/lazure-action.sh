@@ -82,15 +82,20 @@ lazure_build_deploy_args() {
   local vars="$7"
   local extra_args="$8"
   local color="$9"
+  local force="${10}"
 
   lazure_require "env" "$env" || return $?
   lazure_require "wait-timeout" "$wait_timeout" || return $?
   lazure_bool "wait" "$wait" || return $?
   lazure_bool "logs" "$logs" || return $?
   lazure_bool "color" "$color" || return $?
+  lazure_bool "force" "$force" || return $?
 
   lazure_add_common_args "$dir" "$verbose" || return $?
   LAZURE_ARGS+=(deploy "$env" -y "--wait=$wait" "--logs=$logs" --wait-timeout "$wait_timeout")
+  if [[ "$force" == "true" ]]; then
+    LAZURE_ARGS+=(--force)
+  fi
   if [[ "$color" == "false" ]]; then
     LAZURE_ARGS+=(--no-color)
   fi

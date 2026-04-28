@@ -27,6 +27,7 @@ func DeployFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.BoolFlag{Name: "print", Usage: "dump generated ARM YAML to stdout before confirming"},
 		&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "skip the confirmation prompt"},
+		&cli.BoolFlag{Name: "force", Usage: "force a new revision by injecting a timestamp env var"},
 		&cli.StringSliceFlag{Name: "var", Usage: "override a vars entry (repeatable): key=value"},
 		&cli.BoolFlag{Name: "wait", Usage: "after ARM succeeds, wait until the new revision's replicas are Ready"},
 		&cli.DurationFlag{Name: "wait-timeout", Value: 5 * time.Minute, Usage: "max wait time (default: 5m)"},
@@ -49,6 +50,7 @@ func DeployFlags() []cli.Flag {
 func Deploy(ctx context.Context, c *cli.Command) error {
 	print := c.Bool("print")
 	yes := c.Bool("yes")
+	force := c.Bool("force")
 	// --wait defaults to TRUE on interactive terminals (humans want to
 	// see the deploy land), FALSE when piped (CI / scripts assume
 	// fire-and-return semantics from years of `kubectl apply`-style
@@ -68,7 +70,7 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 	}
 	slog.Debug("deploy: start",
 		"env", t.Env, "dir", t.Dir, "print", print, "yes", yes,
-		"subscription", t.Sub, "resource_group", t.RG, "app", t.Name)
+		"force", force, "subscription", t.Sub, "resource_group", t.RG, "app", t.Name)
 
 	// Validate before any side effects.
 	if r := lazurecfg.Validate(t.Manifest); r.HasErrors() {
@@ -124,6 +126,11 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 	})
 	if err != nil {
 		return errs.System(errs.Wrap(err, "deploy: transform"))
+	}
+	if force {
+		ts := time.Now().UTC().Format(time.RFC3339Nano)
+		applyForceRedeployTimestamp(armApp, ts)
+		slog.Info("force redeploy enabled", "env", forceRedeployEnvName, "value", ts)
 	}
 
 	if print {
@@ -192,7 +199,7 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 				app: t.Name, env: t.Env, sub: t.SubLabel(), rg: t.RG,
 				prevRevision: previousRev, newRevision: newRev,
 				prevImage: previousImage, newImage: image,
-				latestReady: final.Properties.LatestReadyRevisionName,
+				latestReady:       final.Properties.LatestReadyRevisionName,
 				provisioningState: final.Properties.ProvisioningState,
 				runningStatus:     final.Properties.RunningStatus,
 				ingressURL:        ingressURL(final),
@@ -330,6 +337,32 @@ func ingressURL(app *azurearm.ContainerApp) string {
 }
 
 // ---------- helpers ----------
+
+const forceRedeployEnvName = "LAZURE_FORCE_REDEPLOYED_AT"
+
+func applyForceRedeployTimestamp(app *azurearm.ContainerApp, timestamp string) {
+	if app == nil {
+		return
+	}
+	for i := range app.Properties.Template.Containers {
+		app.Properties.Template.Containers[i].Env = upsertPlainEnv(
+			app.Properties.Template.Containers[i].Env,
+			forceRedeployEnvName,
+			timestamp,
+		)
+	}
+}
+
+func upsertPlainEnv(env []azurearm.EnvVar, name, value string) []azurearm.EnvVar {
+	for i := range env {
+		if env[i].Name == name {
+			env[i].Value = value
+			env[i].SecretRef = ""
+			return env
+		}
+	}
+	return append(env, azurearm.EnvVar{Name: name, Value: value})
+}
 
 // parseCLIVars converts repeated --var key=value flags into a map. Splits
 // on the FIRST '=' so values may contain '=' characters (e.g. base64 blobs,

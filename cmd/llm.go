@@ -138,7 +138,7 @@ var (
 var commandMetadata = map[string]commandMeta{
 	// ---------- Deploy pipeline ----------
 	"lazure deploy": {
-		useCase: "you have a built+pushed image and want to roll it out to a target environment.",
+		useCase: "you have a built+pushed image and want to roll it out to a target environment; use `--force` to create a fresh revision even when the template would otherwise be unchanged.",
 		prerequisites: []string{
 			prereqAzureAuth,
 			prereqManifest,
@@ -175,7 +175,7 @@ var commandMetadata = map[string]commandMeta{
 		dependencies: []string{depDocker},
 	},
 	"lazure release": {
-		useCase: "cut a calver-tagged production release; the tag triggers the production GH Actions pipeline.",
+		useCase: "cut a calver-tagged production release; the tag triggers the production GH Actions pipeline. `--force` records a force redeploy timestamp marker in the tag body for downstream deploy workflows.",
 		prerequisites: []string{
 			"Clean git working tree on the release branch.",
 			"Push access to the `origin` remote.",

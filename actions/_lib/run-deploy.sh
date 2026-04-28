@@ -19,6 +19,7 @@ lazure_build_deploy_args \
   "${LAZURE_WAIT_TIMEOUT:-5m}" \
   "${LAZURE_VARS:-}" \
   "${LAZURE_EXTRA_ARGS:-}" \
-  "${LAZURE_COLOR:-false}"
+  "${LAZURE_COLOR:-false}" \
+  "${LAZURE_FORCE:-false}"
 
 "${LAZURE_BIN:-lazure}" "${LAZURE_ARGS[@]}"

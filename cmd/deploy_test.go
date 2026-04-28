@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/investerra/lazure/internal/azurearm"
 	"github.com/investerra/lazure/internal/lazurecfg"
 )
 
@@ -119,4 +120,36 @@ func TestFindAppImage_EmptyContainers(t *testing.T) {
 	if got := findAppImage(m); got != "<no containers>" {
 		t.Errorf("findAppImage on empty = %q", got)
 	}
+}
+
+func TestApplyForceRedeployTimestamp_AddsAndReplacesRuntimeEnv(t *testing.T) {
+	app := &azurearm.ContainerApp{}
+	app.Properties.Template.Containers = []azurearm.Container{
+		{Name: "app", Env: []azurearm.EnvVar{{Name: "EXISTING", Value: "1"}}},
+		{Name: "worker", Env: []azurearm.EnvVar{{Name: forceRedeployEnvName, Value: "old"}}},
+	}
+	app.Properties.Template.InitContainers = []azurearm.Container{
+		{Name: "init"},
+	}
+
+	applyForceRedeployTimestamp(app, "2026-04-28T15:30:00Z")
+
+	if got := envValue(app.Properties.Template.Containers[0].Env, forceRedeployEnvName); got != "2026-04-28T15:30:00Z" {
+		t.Errorf("app force env = %q", got)
+	}
+	if got := envValue(app.Properties.Template.Containers[1].Env, forceRedeployEnvName); got != "2026-04-28T15:30:00Z" {
+		t.Errorf("worker force env = %q", got)
+	}
+	if got := envValue(app.Properties.Template.InitContainers[0].Env, forceRedeployEnvName); got != "" {
+		t.Errorf("init force env = %q, want unset", got)
+	}
+}
+
+func envValue(env []azurearm.EnvVar, name string) string {
+	for _, e := range env {
+		if e.Name == name {
+			return e.Value
+		}
+	}
+	return ""
 }

@@ -219,6 +219,56 @@ func TestContainerApps_Put_Async_FailedSurfacesError(t *testing.T) {
 	}
 }
 
+func TestContainerApps_Put_Async_FailedSurfacesNestedAzureMessage(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	caPath := "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/containerApps/x"
+	mux.HandleFunc(caPath, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("unexpected method = %s", r.Method)
+			return
+		}
+		w.Header().Set("Azure-AsyncOperation", srv.URL+"/ops/1")
+		w.WriteHeader(http.StatusAccepted)
+	})
+	mux.HandleFunc("/ops/1", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"status": "Failed",
+			"error": {
+				"code": "ResourceOperationFailure",
+				"message": "The resource operation completed with terminal provisioning state 'Failed'.",
+				"details": [
+					{
+						"code": "ContainerAppOperationError",
+						"message": "Failed to provision revision for container app 'kyc'. Error details: MANIFEST_UNKNOWN: tag is not found"
+					}
+				]
+			}
+		}`))
+	})
+
+	c := &ContainerAppsClient{
+		base:   srv.URL,
+		tokens: newTokenProviderWith(&stubCred{token: "tok"}),
+		client: req.C(),
+		delays: []time.Duration{time.Millisecond},
+	}
+
+	_, err := c.PutAndWait(context.Background(), "sub", "rg", "x", &azurearm.ContainerApp{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "ContainerAppOperationError: Failed to provision revision") {
+		t.Errorf("error should include nested Azure detail message: %v", err)
+	}
+	if strings.Contains(msg, `"details"`) || strings.Contains(msg, `{"code"`) {
+		t.Errorf("error should format Azure error instead of dumping raw JSON: %v", err)
+	}
+}
+
 func TestContainerApps_Put_AsyncHeaderURLIsPolledAsIs(t *testing.T) {
 	mux := http.NewServeMux()
 	srv := httptest.NewServer(mux)

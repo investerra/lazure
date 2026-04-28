@@ -25,6 +25,10 @@ inputs:
     description: Maximum time to wait for ready replicas.
     required: false
     default: 5m
+  force:
+    description: Force a new revision by injecting a timestamp env var.
+    required: false
+    default: "false"
   vars:
     description: Newline-separated key=value entries passed as repeated --var flags.
     required: false
@@ -71,6 +75,7 @@ runs:
         LAZURE_WAIT: ${{ inputs.wait }}
         LAZURE_LOGS: ${{ inputs.logs }}
         LAZURE_WAIT_TIMEOUT: ${{ inputs.wait-timeout }}
+        LAZURE_FORCE: ${{ inputs.force }}
         LAZURE_VARS: ${{ inputs.vars }}
         LAZURE_COLOR: ${{ inputs.color }}
         LAZURE_EXTRA_ARGS: ${{ inputs.extra-args }}

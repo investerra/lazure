@@ -165,6 +165,14 @@ func TestComposeTagBody_NoHeader(t *testing.T) {
 	}
 }
 
+func TestComposeTagBody_ForceTimestamp(t *testing.T) {
+	got := composeTagBody("Bugfix release", "- fix: X", "2026-04-28T15:30:00Z")
+	want := "Bugfix release\n\nLAZURE_FORCE_REDEPLOYED_AT=2026-04-28T15:30:00Z\n\n- fix: X"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 // ---------- parseGHRunListJSON ----------
 
 func TestParseGHRunListJSON_Happy(t *testing.T) {

@@ -23,6 +23,7 @@ func ReleaseFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.BoolFlag{Name: "dry-run", Usage: "print the planned tag + changelog and exit"},
 		&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "skip the confirmation prompt"},
+		&cli.BoolFlag{Name: "force", Usage: "include a force redeploy timestamp marker in the release tag"},
 		&cli.StringFlag{Name: "message", Aliases: []string{"m"}, Usage: "optional header line prepended to the changelog"},
 		&cli.BoolFlag{Name: "wait", Usage: "after push, watch GitHub Actions runs until they complete (requires gh)"},
 	}
@@ -45,9 +46,10 @@ func ReleaseFlags() []cli.Flag {
 func Release(ctx context.Context, c *cli.Command) error {
 	dryRun := c.Bool("dry-run")
 	yes := c.Bool("yes")
+	force := c.Bool("force")
 	msg := c.String("message")
 	wait := c.Bool("wait")
-	slog.Debug("release: start", "dry_run", dryRun, "yes", yes, "wait", wait, "has_message", msg != "")
+	slog.Debug("release: start", "dry_run", dryRun, "yes", yes, "force", force, "wait", wait, "has_message", msg != "")
 
 	if err := ensureReleasableBranch(ctx); err != nil {
 		return errs.Usage(err)
@@ -77,7 +79,15 @@ func Release(ctx context.Context, c *cli.Command) error {
 		return errs.System(errs.Wrap(err, "release: build changelog"))
 	}
 
+	forceTimestamp := ""
+	if force {
+		forceTimestamp = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+
 	preview := renderPreview(newTag, baseTag, changelog)
+	if forceTimestamp != "" {
+		preview += fmt.Sprintf("force redeploy: %s=%s\n", forceRedeployEnvName, forceTimestamp)
+	}
 	fmt.Println(preview)
 
 	if dryRun {
@@ -88,7 +98,7 @@ func Release(ctx context.Context, c *cli.Command) error {
 		return errs.Usage(errs.New("release: aborted by user"))
 	}
 
-	tagBody := composeTagBody(msg, changelog)
+	tagBody := composeTagBody(msg, changelog, forceTimestamp)
 	slog.Info("creating annotated tag", "tag", newTag)
 	if _, err := gitRun(ctx, "tag", "-a", newTag, "-m", tagBody); err != nil {
 		return errs.System(errs.Wrap(err, "release: git tag"))
@@ -270,11 +280,16 @@ func renderPreview(newTag, baseTag, changelog string) string {
 
 // composeTagBody builds the annotated-tag message. An optional --message
 // header sits above the changelog with a blank line between.
-func composeTagBody(header, changelog string) string {
-	if header == "" {
-		return changelog
+func composeTagBody(header, changelog string, forceTimestamp ...string) string {
+	var sections []string
+	if header != "" {
+		sections = append(sections, header)
 	}
-	return header + "\n\n" + changelog
+	if len(forceTimestamp) > 0 && forceTimestamp[0] != "" {
+		sections = append(sections, forceRedeployEnvName+"="+forceTimestamp[0])
+	}
+	sections = append(sections, changelog)
+	return strings.Join(sections, "\n\n")
 }
 
 // ---------- CI watch ----------

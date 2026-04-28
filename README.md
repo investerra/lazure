@@ -103,6 +103,7 @@ steps:
   - uses: investerra/lazure/actions/deploy@v1
     with:
       env: dev
+      force: false
 ```
 
 ## Editor integration

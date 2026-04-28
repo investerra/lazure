@@ -25,7 +25,7 @@ assert_args() {
 }
 
 test_deploy_defaults() {
-  lazure_build_deploy_args "dev" "deploy" "false" "true" "true" "5m" "" "" "false"
+  lazure_build_deploy_args "dev" "deploy" "false" "true" "true" "5m" "" "" "false" "false"
 
   assert_args "deploy defaults" \
     "<--dir><deploy><deploy><dev><-y><--wait=true><--logs=true><--wait-timeout><5m><--no-color>" \
@@ -33,10 +33,10 @@ test_deploy_defaults() {
 }
 
 test_deploy_vars_and_extra_args() {
-  lazure_build_deploy_args "uat" "infra" "true" "false" "false" "10m" $'image=repo/app:sha\nversion=42' "--print" "true"
+  lazure_build_deploy_args "uat" "infra" "true" "false" "false" "10m" $'image=repo/app:sha\nversion=42' "--print" "true" "true"
 
   assert_args "deploy vars and extra args" \
-    "<--dir><infra><-v><deploy><uat><-y><--wait=false><--logs=false><--wait-timeout><10m><--var><image=repo/app:sha><--var><version=42><--print>" \
+    "<--dir><infra><-v><deploy><uat><-y><--wait=false><--logs=false><--wait-timeout><10m><--force><--var><image=repo/app:sha><--var><version=42><--print>" \
     "${LAZURE_ARGS[@]}"
 }
 
