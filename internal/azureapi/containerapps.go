@@ -173,17 +173,22 @@ func (c *ContainerAppsClient) PatchScaleAndWait(ctx context.Context, sub, rg, na
 }
 
 // waitForCompletion handles the sync-or-async response dance shared by
-// PUT and PATCH. On sync (200/201), decodes the body and returns. On
-// async (202), polls Azure-AsyncOperation until Succeeded then fetches
-// the final state via Get.
+// PUT and PATCH. On sync (200/201) and async (202) we converge on the
+// same final step — a GET against the resource — so callers always
+// observe a settled, read-after-write-consistent view.
+//
+// We deliberately do NOT decode the sync PUT/PATCH response body for
+// the return value: ARM's sync responses sometimes omit read-only
+// fields such as properties.latestRevisionName because the revision-
+// creation event hasn't propagated to the read model when the PUT
+// returns. That manifests as `revision=""` in deploy logs (and the
+// "no latestRevisionName after PutAndWait — skipping --wait" warn
+// in cmd/deploy.go). The follow-up GET returns the populated state.
 func (c *ContainerAppsClient) waitForCompletion(ctx context.Context, sub, rg, name string, resp *req.Response, verb string) (*azurearm.ContainerApp, error) {
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusCreated:
-		var app azurearm.ContainerApp
-		if err := json.Unmarshal(resp.Bytes(), &app); err != nil {
-			return nil, errs.Wrapf(err, "containerapps: parse sync %s response", verb)
-		}
-		return &app, nil
+		slog.Debug("containerapps: sync response — refetching for read-after-write consistency", "verb", verb)
+		return c.Get(ctx, sub, rg, name)
 
 	case http.StatusAccepted:
 		opURL := resp.Header.Get("Azure-AsyncOperation")

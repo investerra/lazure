@@ -258,3 +258,52 @@ func countContaining(list []string, substr string) int {
 	}
 	return n
 }
+
+func TestSecrets_RejectsInvalidName_InSOPS(t *testing.T) {
+	m := baseManifest()
+	m.Env = map[string]*lazurecfg.EnvValue{
+		"DB": {SecretRef: "db-url"},
+	}
+	sops := map[string]string{
+		"db-url":            "x",
+		"kyc-bad_underscore": "y", // orphan-but-invalid: must error, not just warn
+	}
+
+	r := Secrets(context.Background(), m, sops, nil)
+	if !r.HasErrors() {
+		t.Fatal("expected error for invalid SOPS key name")
+	}
+	if !errorsContain(r.Errors, "kyc-bad_underscore") {
+		t.Errorf("errors = %v, want one mentioning the bad name", r.Errors)
+	}
+	if !errorsContain(r.Errors, "kyc-bad-underscore") {
+		t.Errorf("errors = %v, want a hyphenated suggestion", r.Errors)
+	}
+}
+
+func TestSecrets_RejectsInvalidName_InManifestRef(t *testing.T) {
+	m := baseManifest()
+	m.Env = map[string]*lazurecfg.EnvValue{
+		"DB": {SecretRef: "kyc-database_url"}, // bad name
+	}
+	// SOPS doesn't have it either, but the name-rule error should come
+	// before (or alongside) the missing-from-SOPS error.
+	r := Secrets(context.Background(), m, map[string]string{}, nil)
+	if !errorsContain(r.Errors, "Azure Key Vault") {
+		t.Errorf("errors = %v, want one mentioning the Azure name rule", r.Errors)
+	}
+}
+
+func TestSecrets_NameCheckReportsEachOnce(t *testing.T) {
+	m := baseManifest()
+	m.Env = map[string]*lazurecfg.EnvValue{
+		"DB": {SecretRef: "kyc-database_url"},
+	}
+	// Same bad name on both sides.
+	sops := map[string]string{"kyc-database_url": "x"}
+
+	r := Secrets(context.Background(), m, sops, nil)
+	if c := countContaining(r.Errors, "kyc-database_url"); c != 1 {
+		t.Errorf("expected 1 name-rule error for kyc-database_url, got %d (errors: %v)", c, r.Errors)
+	}
+}

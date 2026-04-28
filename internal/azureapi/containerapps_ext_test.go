@@ -123,15 +123,30 @@ func TestContainerApps_RestartRevision_NotFound(t *testing.T) {
 // ---------- PatchTrafficAndWait ----------
 
 func TestContainerApps_PatchTraffic_Synchronous(t *testing.T) {
-	var gotMethod, gotBody string
+	// Sync PATCH path: PATCH returns 200 with the updated body; the
+	// follow-up GET (for read-after-write consistency) returns the
+	// settled state that callers actually receive.
+	var sawPatch, sawGet bool
+	var patchBody string
 	c, _ := newMockARMClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		b, _ := io.ReadAll(r.Body)
-		gotBody = string(b)
-		_, _ = w.Write([]byte(`{
-			"type": "Microsoft.App/containerApps", "name": "app", "location": "sn",
-			"properties": {"managedEnvironmentId": "/x", "configuration": {"activeRevisionsMode": "Multiple"}}
-		}`))
+		switch r.Method {
+		case http.MethodPatch:
+			sawPatch = true
+			b, _ := io.ReadAll(r.Body)
+			patchBody = string(b)
+			_, _ = w.Write([]byte(`{
+				"type": "Microsoft.App/containerApps", "name": "app", "location": "sn",
+				"properties": {"managedEnvironmentId": "/x", "configuration": {"activeRevisionsMode": "Multiple"}}
+			}`))
+		case http.MethodGet:
+			sawGet = true
+			_, _ = w.Write([]byte(`{
+				"type": "Microsoft.App/containerApps", "name": "app", "location": "sn",
+				"properties": {"managedEnvironmentId": "/x", "configuration": {"activeRevisionsMode": "Multiple"}}
+			}`))
+		default:
+			t.Errorf("unexpected method = %s", r.Method)
+		}
 	}))
 
 	traffic := []azurearm.TrafficEntry{
@@ -142,12 +157,12 @@ func TestContainerApps_PatchTraffic_Synchronous(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotMethod != http.MethodPatch {
-		t.Errorf("method = %s, want PATCH", gotMethod)
+	if !sawPatch || !sawGet {
+		t.Errorf("expected PATCH then GET, sawPatch=%v sawGet=%v", sawPatch, sawGet)
 	}
-	// Body should carry properties.configuration.ingress.traffic + activeRevisionsMode.
+	// PATCH body should carry properties.configuration.ingress.traffic + activeRevisionsMode.
 	var parsed map[string]any
-	if err := json.Unmarshal([]byte(gotBody), &parsed); err != nil {
+	if err := json.Unmarshal([]byte(patchBody), &parsed); err != nil {
 		t.Fatal(err)
 	}
 	cfg := parsed["properties"].(map[string]any)["configuration"].(map[string]any)

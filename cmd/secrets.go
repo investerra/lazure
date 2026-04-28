@@ -14,10 +14,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"text/tabwriter"
 
 	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
+	"sigs.k8s.io/yaml"
 
 	"github.com/investerra/lazure/internal/azureapi"
 	"github.com/investerra/lazure/internal/errs"
@@ -260,8 +262,23 @@ func SecretsEdit(ctx context.Context, c *cli.Command) error {
 		_ = os.Remove(plainPath)
 		return nil
 	}
-	slog.Debug("secrets edit: change detected, re-encrypting")
+	slog.Debug("secrets edit: change detected, validating names")
 
+	parsed, err := parsePlainSecrets(newContent)
+	if err != nil {
+		// Plain file is left in place so the user can fix the YAML
+		// without losing their edit. Re-running `lazure secrets edit`
+		// would hit the stale-plain guard, so direct them to encrypt
+		// once the file is valid.
+		return errs.Validation(errs.Wrapf(err,
+			"secrets edit: %s isn't valid YAML — fix it and run `lazure secrets encrypt %s`", plainPath, env))
+	}
+	if err := validateSecretNamesMap(parsed); err != nil {
+		return errs.Validation(errs.Wrapf(err,
+			"secrets edit: invalid name(s) in %s — fix them and run `lazure secrets encrypt %s`", plainPath, env))
+	}
+
+	slog.Debug("secrets edit: re-encrypting")
 	if err := sopsio.Encrypt(plainPath, encPath, sopsConfigPath(c.String("dir"))); err != nil {
 		return errs.System(errs.Wrap(err, "secrets edit: encrypt"))
 	}
@@ -289,6 +306,8 @@ func marshalPlainSecrets(secrets map[string]string) ([]byte, error) {
 	keys := sortedKeys(secrets)
 	var buf strings.Builder
 	buf.WriteString("# Decrypted secrets — DO NOT COMMIT. Delete this file when done editing.\n")
+	buf.WriteString("# Names must match ^[0-9a-zA-Z-]+$ (alphanumeric + hyphens, no underscores)\n")
+	buf.WriteString(fmt.Sprintf("# and be at most %d characters — Azure Key Vault rejects anything else.\n", azureapi.SecretNameMaxLen))
 	for _, k := range keys {
 		v, err := json.Marshal(secrets[k])
 		if err != nil {
@@ -300,6 +319,43 @@ func marshalPlainSecrets(secrets map[string]string) ([]byte, error) {
 		buf.WriteString("\n")
 	}
 	return []byte(buf.String()), nil
+}
+
+// validateSecretNamesMap runs Azure's name rule against every key in
+// the given map. Returns a single multi-line error listing each bad
+// name with a hyphenated suggestion — designed to be the diff a user
+// can apply directly. nil when every name is valid.
+func validateSecretNamesMap(secrets map[string]string) error {
+	var bad []string
+	for name := range secrets {
+		if err := azureapi.ValidateSecretName(name); err != nil {
+			bad = append(bad, name)
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	sort.Strings(bad)
+	lines := make([]string, 0, len(bad))
+	for _, n := range bad {
+		lines = append(lines, fmt.Sprintf("%s → %s", n, azureapi.SuggestSecretName(n)))
+	}
+	return errs.Errorf(
+		"%d invalid secret name(s) — Azure Key Vault requires ^[0-9a-zA-Z-]+$ (alphanumeric + hyphens, no underscores), max %d chars:\n  %s",
+		len(bad), azureapi.SecretNameMaxLen, strings.Join(lines, "\n  "),
+	)
+}
+
+// parsePlainSecrets unmarshals a plain-text secrets file (the format
+// emitted by marshalPlainSecrets) back into a map. Used by the post-
+// edit validation path — we only need the keys, but the full map is
+// the natural unit and trivial to produce.
+func parsePlainSecrets(content []byte) (map[string]string, error) {
+	out := map[string]string{}
+	if err := yaml.Unmarshal(content, &out); err != nil {
+		return nil, errs.Wrap(err, "parse plain secrets")
+	}
+	return out, nil
 }
 
 // ---------- decrypt ----------
@@ -440,6 +496,17 @@ func SecretsEncrypt(ctx context.Context, c *cli.Command) error {
 	if _, err := os.Stat(plainPath); err != nil {
 		return errs.Usage(errs.Wrapf(err, "secrets encrypt: plain file %q not found", plainPath))
 	}
+	plainBytes, err := os.ReadFile(plainPath)
+	if err != nil {
+		return errs.System(errs.Wrapf(err, "secrets encrypt: read %s", plainPath))
+	}
+	parsed, err := parsePlainSecrets(plainBytes)
+	if err != nil {
+		return errs.Validation(errs.Wrapf(err, "secrets encrypt: %s isn't valid YAML", plainPath))
+	}
+	if err := validateSecretNamesMap(parsed); err != nil {
+		return errs.Validation(errs.Wrapf(err, "secrets encrypt: invalid name(s) in %s", plainPath))
+	}
 	if err := sopsio.Encrypt(plainPath, encPath, sopsConfigPath(c.String("dir"))); err != nil {
 		return errs.System(errs.Wrap(err, "secrets encrypt"))
 	}
@@ -574,8 +641,17 @@ func SecretsSync(ctx context.Context, c *cli.Command) error {
 }
 
 func syncUpsert(ctx context.Context, kv *azureapi.KeyVaultClient, secrets map[string]string, concurrency int, dryRun bool) error {
-	eg, egCtx := errgroup.WithContext(ctx)
+	// We deliberately do NOT use errgroup.WithContext here. That
+	// variant cancels the shared context on the first error, which
+	// then surfaces inside in-flight HTTP errors as the *cause* of
+	// the cancellation — making every other secret's "✗" line appear
+	// to fail with the first secret's error. We want each row to
+	// report its own real error (or context.Canceled on Ctrl-C),
+	// so siblings keep running on the parent ctx and we collect
+	// failures separately.
+	eg := new(errgroup.Group)
 	eg.SetLimit(concurrency)
+	var failed atomic.Int32
 	for _, name := range sortedKeys(secrets) {
 		name, value := name, secrets[name]
 		eg.Go(func() error {
@@ -583,15 +659,20 @@ func syncUpsert(ctx context.Context, kv *azureapi.KeyVaultClient, secrets map[st
 				fmt.Printf("would PUT %s\n", name)
 				return nil
 			}
-			if err := kv.PutSecret(egCtx, name, value); err != nil {
+			if err := kv.PutSecret(ctx, name, value); err != nil {
 				fmt.Printf("✗ %s: %v\n", name, err)
-				return err
+				failed.Add(1)
+				return nil
 			}
 			fmt.Printf("✓ %s\n", name)
 			return nil
 		})
 	}
-	return eg.Wait()
+	_ = eg.Wait()
+	if n := failed.Load(); n > 0 {
+		return errs.Errorf("%d of %d secret(s) failed to upload", n, len(secrets))
+	}
+	return nil
 }
 
 

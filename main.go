@@ -14,6 +14,21 @@ import (
 	"github.com/investerra/lazure/internal/logging"
 )
 
+// Drop the default `-v` alias from urfave/cli's auto-injected
+// --version flag — we want `-v` reserved for our own --verbose
+// shortcut. With the default in place, both flags are registered with
+// the same alias and the parser routes `--verbose` (and `-v`) to
+// --version, printing the version string instead of enabling debug
+// logging. This must run before newApp() builds the command.
+func init() {
+	cli.VersionFlag = &cli.BoolFlag{
+		Name:        "version",
+		Usage:       "print the version",
+		HideDefault: true,
+		Local:       true,
+	}
+}
+
 // Build-time injection via -ldflags "-X main.Version=... -X main.Commit=... -X main.Date=...".
 // Commit + Date are stamped by goreleaser; running `go build` without
 // ldflags leaves them empty and the version line falls back to just

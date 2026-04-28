@@ -90,16 +90,32 @@ func TestContainerApps_Get_ServerError(t *testing.T) {
 // ---------- PutAndWait: synchronous ----------
 
 func TestContainerApps_Put_Synchronous(t *testing.T) {
+	// Sync PUT path: PUT returns 200; waitForCompletion follows up
+	// with a GET to fetch the read-after-write-consistent state
+	// (covers the case where ARM's sync response omits read-only
+	// fields like properties.latestRevisionName).
+	var sawPut, sawGet bool
 	c, _ := newMockARMClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("method = %s", r.Method)
+		switch r.Method {
+		case http.MethodPut:
+			sawPut = true
+			_, _ = w.Write([]byte(`{
+				"type": "Microsoft.App/containerApps",
+				"name": "api-server",
+				"location": "switzerlandnorth",
+				"properties": {"managedEnvironmentId": "/x"}
+			}`))
+		case http.MethodGet:
+			sawGet = true
+			_, _ = w.Write([]byte(`{
+				"type": "Microsoft.App/containerApps",
+				"name": "api-server",
+				"location": "switzerlandnorth",
+				"properties": {"managedEnvironmentId": "/x", "latestRevisionName": "api-server--abc"}
+			}`))
+		default:
+			t.Errorf("unexpected method = %s", r.Method)
 		}
-		_, _ = w.Write([]byte(`{
-			"type": "Microsoft.App/containerApps",
-			"name": "api-server",
-			"location": "switzerlandnorth",
-			"properties": {"managedEnvironmentId": "/x"}
-		}`))
 	}))
 
 	body := &azurearm.ContainerApp{
@@ -109,8 +125,14 @@ func TestContainerApps_Put_Synchronous(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !sawPut || !sawGet {
+		t.Errorf("expected PUT then GET, sawPut=%v sawGet=%v", sawPut, sawGet)
+	}
 	if got.Name != "api-server" {
 		t.Errorf("name = %q", got.Name)
+	}
+	if got.Properties.LatestRevisionName != "api-server--abc" {
+		t.Errorf("latestRevisionName = %q, want the value from the post-PUT GET", got.Properties.LatestRevisionName)
 	}
 }
 

@@ -49,8 +49,17 @@ type ContainerAppProperties struct {
 	// Read-only fields populated by GET responses. omitempty means we
 	// never accidentally write them back in a PUT body — lazure-managed
 	// state lives elsewhere in the struct.
-	LatestRevisionName string `json:"latestRevisionName,omitempty"`
-	ProvisioningState  string `json:"provisioningState,omitempty"`
+	//
+	// LatestRevisionName is the most recently *created* revision; it
+	// may not yet be Ready. LatestReadyRevisionName is the latest one
+	// that is actively serving traffic — they diverge while a fresh
+	// revision is rolling out, or stay diverged when the new revision
+	// fails to come up.
+	LatestRevisionName      string `json:"latestRevisionName,omitempty"`
+	LatestReadyRevisionName string `json:"latestReadyRevisionName,omitempty"`
+	LatestRevisionFqdn      string `json:"latestRevisionFqdn,omitempty"`
+	ProvisioningState       string `json:"provisioningState,omitempty"`
+	RunningStatus           string `json:"runningStatus,omitempty"`
 }
 
 // Configuration groups app-level (non-replica) settings. Secrets here are

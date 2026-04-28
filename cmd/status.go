@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/urfave/cli/v3"
@@ -124,7 +125,144 @@ func printStatusTable(env string, app *azurearm.ContainerApp) error {
 			fmt.Printf("  %3d%% → %s%s\n", t.Weight, target, label)
 		}
 	}
+
+	if cs := app.Properties.Template.Containers; len(cs) > 0 {
+		fmt.Println("Containers:")
+		for _, c := range cs {
+			printContainerSummary(c, "  ")
+		}
+	}
+	if ics := app.Properties.Template.InitContainers; len(ics) > 0 {
+		fmt.Println("Init containers:")
+		for _, c := range ics {
+			printContainerSummary(c, "  ")
+		}
+	}
 	return nil
+}
+
+// printContainerSummary renders a per-container block for the status
+// table. Indented with `prefix` to allow consistent rendering under
+// either the Containers: or Init containers: header. Designed to
+// answer "what's actually running in this app right now?":
+//
+//   - image (the load-bearing answer to most status questions)
+//   - resource budget
+//   - env-var surface — counts by kind so secret refs are visible
+//     without dumping values
+//   - probe summary (type + endpoint shape)
+//   - mount points
+//   - command/args overrides if set (image defaults are interesting
+//     by their absence, but explicit overrides change behavior)
+func printContainerSummary(c azurearm.Container, prefix string) {
+	fmt.Printf("%s%s\n", prefix, displayName(c.Name))
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	indent := prefix + "  "
+	fmt.Fprintf(tw, "%sImage:\t%s\n", indent, fallbackString(c.Image, "—"))
+	if r := c.Resources; r != nil {
+		fmt.Fprintf(tw, "%sResources:\t%s\n", indent, formatResources(r))
+	}
+	if env := c.Env; len(env) > 0 {
+		fmt.Fprintf(tw, "%sEnv:\t%s\n", indent, formatEnvCounts(env))
+	}
+	if mounts := c.VolumeMounts; len(mounts) > 0 {
+		fmt.Fprintf(tw, "%sMounts:\t%s\n", indent, formatMounts(mounts))
+	}
+	if probes := c.Probes; len(probes) > 0 {
+		fmt.Fprintf(tw, "%sProbes:\t%s\n", indent, formatProbes(probes))
+	}
+	if len(c.Command) > 0 {
+		fmt.Fprintf(tw, "%sCommand:\t%s\n", indent, strings.Join(c.Command, " "))
+	}
+	if len(c.Args) > 0 {
+		fmt.Fprintf(tw, "%sArgs:\t%s\n", indent, strings.Join(c.Args, " "))
+	}
+	if c.WorkingDir != "" {
+		fmt.Fprintf(tw, "%sWorkingDir:\t%s\n", indent, c.WorkingDir)
+	}
+	_ = tw.Flush()
+}
+
+func displayName(name string) string {
+	if name == "" {
+		return "<unnamed>"
+	}
+	return name
+}
+
+func fallbackString(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
+}
+
+// formatResources collapses a Resources block into "0.5 CPU / 1Gi".
+func formatResources(r *azurearm.Resources) string {
+	cpu := fmt.Sprintf("%g", r.CPU)
+	mem := r.Memory
+	if mem == "" {
+		mem = "—"
+	}
+	return cpu + " CPU / " + mem
+}
+
+// formatEnvCounts breaks env vars into "N plain, M secret refs" so
+// callers see at a glance how many secrets are wired in. Values are
+// never printed (would leak plaintext-config or, via secretRef, leak
+// the Key Vault secret name to anyone reading status).
+func formatEnvCounts(env []azurearm.EnvVar) string {
+	plain, secret := 0, 0
+	for _, e := range env {
+		if e.SecretRef != "" {
+			secret++
+		} else {
+			plain++
+		}
+	}
+	switch {
+	case plain > 0 && secret > 0:
+		return fmt.Sprintf("%d plain, %d secret ref(s)", plain, secret)
+	case secret > 0:
+		return fmt.Sprintf("%d secret ref(s)", secret)
+	case plain > 0:
+		return fmt.Sprintf("%d plain", plain)
+	default:
+		return "—"
+	}
+}
+
+// formatMounts renders volumes as "path (volumeName)[, path (volumeName)]".
+func formatMounts(mounts []azurearm.VolumeMount) string {
+	parts := make([]string, 0, len(mounts))
+	for _, m := range mounts {
+		parts = append(parts, fmt.Sprintf("%s (%s)", m.MountPath, m.VolumeName))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// formatProbes summarises probes per type with endpoint + port. The
+// probe slice can include up to three (Liveness, Readiness, Startup);
+// rendering each as a short clause is more useful than a count.
+func formatProbes(probes []azurearm.Probe) string {
+	parts := make([]string, 0, len(probes))
+	for _, p := range probes {
+		var endpoint string
+		switch {
+		case p.HTTPGet != nil:
+			endpoint = fmt.Sprintf("GET :%d%s", p.HTTPGet.Port, p.HTTPGet.Path)
+		case p.TCPSocket != nil:
+			endpoint = fmt.Sprintf("TCP :%d", p.TCPSocket.Port)
+		default:
+			endpoint = "(unknown action)"
+		}
+		typ := p.Type
+		if typ == "" {
+			typ = "Probe"
+		}
+		parts = append(parts, fmt.Sprintf("%s %s", typ, endpoint))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // printStatusJSON emits the raw ARM body as pretty-printed JSON. We

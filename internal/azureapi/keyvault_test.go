@@ -326,3 +326,55 @@ func TestKeyVault_Integration(t *testing.T) {
 		t.Error("ListSecrets returned empty — integration vault should have at least the nexus-* secrets")
 	}
 }
+
+func TestValidateSecretName(t *testing.T) {
+	cases := []struct {
+		name string
+		ok   bool
+	}{
+		{"db-url", true},
+		{"kyc-database-url", true},
+		{"a", true},
+		{"abc123-XYZ", true},
+		{"", false},
+		{"with_underscore", false},
+		{"with.dot", false},
+		{"with/slash", false},
+		{"with space", false},
+		{"with-non-ascii-é", false},
+	}
+	for _, tc := range cases {
+		err := ValidateSecretName(tc.name)
+		if tc.ok && err != nil {
+			t.Errorf("ValidateSecretName(%q) = %v, want nil", tc.name, err)
+		}
+		if !tc.ok && err == nil {
+			t.Errorf("ValidateSecretName(%q) = nil, want error", tc.name)
+		}
+	}
+
+	long := make([]byte, SecretNameMaxLen+1)
+	for i := range long {
+		long[i] = 'a'
+	}
+	if err := ValidateSecretName(string(long)); err == nil {
+		t.Errorf("ValidateSecretName(<%d a's>) = nil, want length error", len(long))
+	}
+}
+
+func TestSuggestSecretName(t *testing.T) {
+	cases := map[string]string{
+		"kyc-database_url":         "kyc-database-url",
+		"kyc__double":              "kyc-double",
+		"_leading":                 "leading",
+		"trailing_":                "trailing",
+		"a.b.c":                    "a-b-c",
+		"already-good":             "already-good",
+		"with spaces and-symbols!": "with-spaces-and-symbols",
+	}
+	for in, want := range cases {
+		if got := SuggestSecretName(in); got != want {
+			t.Errorf("SuggestSecretName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

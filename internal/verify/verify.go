@@ -12,8 +12,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 
+	"github.com/investerra/lazure/internal/azureapi"
 	"github.com/investerra/lazure/internal/errs"
 	"github.com/investerra/lazure/internal/lazurecfg"
 )
@@ -76,6 +78,44 @@ func Secrets(ctx context.Context, manifest *lazurecfg.Manifest, sopsSecrets map[
 		refSet[ref] = struct{}{}
 	}
 	slog.Debug("verify: collected refs", "refs", len(refs), "sops_keys", len(sopsSecrets))
+
+	// (0) Every name in play — whether referenced by the manifest or
+	// stored in SOPS — must satisfy Azure Key Vault's character class
+	// (^[0-9a-zA-Z-]+$, ≤127 chars). Failing this guarantees a 400
+	// BadParameter on `secrets sync` and a 400 ContainerAppSecret-
+	// KeyVaultUrlInvalid (reported as a misleading "different cloud"
+	// message) on `lazure deploy` — both far easier to debug at
+	// validate time. Reported once per offending name even if the
+	// name appears on both sides.
+	checked := map[string]struct{}{}
+	addNameCheck := func(name, origin string) {
+		if _, dup := checked[name]; dup {
+			return
+		}
+		checked[name] = struct{}{}
+		if err := azureapi.ValidateSecretName(name); err != nil {
+			r.addError("secret %q (%s) is invalid for Azure Key Vault — only alphanumeric and hyphens allowed (≤%d chars). Suggested rename: %q",
+				name, origin, azureapi.SecretNameMaxLen, azureapi.SuggestSecretName(name))
+		}
+	}
+	// Walk in deterministic order so the error list is stable across runs.
+	sortedRefs := append([]string(nil), refs...)
+	sort.Strings(sortedRefs)
+	for _, ref := range sortedRefs {
+		origin := "manifest reference"
+		if _, inSOPS := sopsSecrets[ref]; inSOPS {
+			origin = "manifest reference + SOPS key"
+		}
+		addNameCheck(ref, origin)
+	}
+	sopsKeys := make([]string, 0, len(sopsSecrets))
+	for k := range sopsSecrets {
+		sopsKeys = append(sopsKeys, k)
+	}
+	sort.Strings(sopsKeys)
+	for _, k := range sopsKeys {
+		addNameCheck(k, "SOPS key")
+	}
 
 	// (1) Every reference must be in the SOPS file.
 	missingInSOPS := map[string]struct{}{}
