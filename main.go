@@ -379,6 +379,21 @@ Marks:
 			// Config surface
 			cmd.SecretsCommand(),
 			cmd.VarsCommand(),
+
+			// Documentation
+			{
+				Name:  "llm",
+				Usage: "print full CLI reference in a format optimised for LLMs and AI agents",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{Name: "json", Usage: "emit a structured JSON document instead of markdown"},
+				},
+				Action: cmd.Llm,
+				Description: `Examples:
+  lazure llm                              print full reference (markdown) to stdout
+  lazure llm --json                       structured JSON for tool consumption
+  lazure llm > AGENTS.md                  capture markdown to a file
+  lazure llm --json | jq '.categories[].commands[].path'  list every command`,
+			},
 		},
 		EnableShellCompletion: true,
 	}
