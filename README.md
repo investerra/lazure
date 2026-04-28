@@ -71,6 +71,40 @@ lazure deploy dev                   # deploy (auto-waits + tails logs on TTY)
 
 Run `lazure <command> --help` for flags and examples.
 
+## GitHub Actions
+
+This repo exports composite actions for app repositories that want to run
+Lazure from CI. Check out the app repo and authenticate Azure first; the
+actions build the `lazure` binary from the selected `investerra/lazure` ref
+and run it against the caller workspace.
+
+```yaml
+permissions:
+  contents: read
+  id-token: write
+
+steps:
+  - uses: actions/checkout@v4
+
+  - uses: azure/login@v2
+    with:
+      client-id: ${{ vars.AZURE_CLIENT_ID }}
+      tenant-id: ${{ vars.AZURE_TENANT_ID }}
+      subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+  - uses: investerra/lazure/actions/validate@v1
+    with:
+      env: dev
+
+  - uses: investerra/lazure/actions/sync_secrets@v1
+    with:
+      env: dev
+
+  - uses: investerra/lazure/actions/deploy@v1
+    with:
+      env: dev
+```
+
 ## Editor integration
 
 `lazure init` scaffolds a `deploy/deploy.schema.json` and embeds the

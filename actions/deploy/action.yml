@@ -1,0 +1,77 @@
+name: Lazure deploy
+description: Deploy an Azure Container App with lazure.
+
+inputs:
+  env:
+    description: Target lazure environment, for example dev or prd.
+    required: true
+  dir:
+    description: Directory containing deploy.yml and envs/.
+    required: false
+    default: deploy
+  verbose:
+    description: Enable lazure verbose logging.
+    required: false
+    default: "false"
+  wait:
+    description: Wait until the deployed revision replicas are ready.
+    required: false
+    default: "true"
+  logs:
+    description: Stream logs while waiting for the deployed revision.
+    required: false
+    default: "true"
+  wait-timeout:
+    description: Maximum time to wait for ready replicas.
+    required: false
+    default: 5m
+  vars:
+    description: Newline-separated key=value entries passed as repeated --var flags.
+    required: false
+    default: ""
+  color:
+    description: Enable ANSI color in lazure output.
+    required: false
+    default: "false"
+  extra-args:
+    description: Additional whitespace-separated arguments appended to lazure deploy.
+    required: false
+    default: ""
+
+outputs:
+  lazure-bin:
+    description: Path to the lazure binary built for this action run.
+    value: ${{ steps.install.outputs.lazure-bin }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: stable
+        cache: false
+
+    - name: Build lazure
+      id: install
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: bash "$ACTION_PATH/../_lib/install-lazure.sh"
+
+    - name: Deploy
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        LAZURE_BIN: ${{ steps.install.outputs.lazure-bin }}
+        LAZURE_ENV: ${{ inputs.env }}
+        LAZURE_DIR: ${{ inputs.dir }}
+        LAZURE_VERBOSE: ${{ inputs.verbose }}
+        LAZURE_WAIT: ${{ inputs.wait }}
+        LAZURE_LOGS: ${{ inputs.logs }}
+        LAZURE_WAIT_TIMEOUT: ${{ inputs.wait-timeout }}
+        LAZURE_VARS: ${{ inputs.vars }}
+        LAZURE_COLOR: ${{ inputs.color }}
+        LAZURE_EXTRA_ARGS: ${{ inputs.extra-args }}
+      run: bash "$ACTION_PATH/../_lib/run-deploy.sh"

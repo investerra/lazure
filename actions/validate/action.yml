@@ -1,0 +1,52 @@
+name: Lazure validate
+description: Validate a rendered lazure manifest and secret references.
+
+inputs:
+  env:
+    description: Target lazure environment, for example dev or prd.
+    required: true
+  dir:
+    description: Directory containing deploy.yml and envs/.
+    required: false
+    default: deploy
+  verbose:
+    description: Enable lazure verbose logging.
+    required: false
+    default: "false"
+  extra-args:
+    description: Additional whitespace-separated arguments appended to lazure validate.
+    required: false
+    default: ""
+
+outputs:
+  lazure-bin:
+    description: Path to the lazure binary built for this action run.
+    value: ${{ steps.install.outputs.lazure-bin }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: stable
+        cache: false
+
+    - name: Build lazure
+      id: install
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: bash "$ACTION_PATH/../_lib/install-lazure.sh"
+
+    - name: Validate
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        LAZURE_BIN: ${{ steps.install.outputs.lazure-bin }}
+        LAZURE_ENV: ${{ inputs.env }}
+        LAZURE_DIR: ${{ inputs.dir }}
+        LAZURE_VERBOSE: ${{ inputs.verbose }}
+        LAZURE_EXTRA_ARGS: ${{ inputs.extra-args }}
+      run: bash "$ACTION_PATH/../_lib/run-validate.sh"

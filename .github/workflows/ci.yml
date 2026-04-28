@@ -42,6 +42,21 @@ jobs:
       - name: Test
         run: go test -race -timeout 5m ./...
 
+  actions-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Check action shell scripts
+        run: bash -n actions/_lib/*.sh actions/_lib/test/*.sh
+
+      - name: Test action command rendering
+        run: bash actions/_lib/test/lazure-action-test.sh
+
+      - name: Parse action metadata
+        run: ruby -e 'require "yaml"; ARGV.each { |f| YAML.load_file(f); puts f }' actions/deploy/action.yml actions/sync_secrets/action.yml actions/validate/action.yml
+
   # Static analysis beyond what `go vet` catches. golangci-lint is the
   # community-standard umbrella over staticcheck, revive, errcheck, etc.
   # Pinned to a stable release so upgrading the lint ruleset is an
