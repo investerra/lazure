@@ -8,9 +8,10 @@ import (
 )
 
 func TestBuildAzExecArgs_NoCommand(t *testing.T) {
-	got := buildAzExecArgs("myapp", "my-rg", "myapp--abc123", "app", nil)
+	got := buildAzExecArgs("sub-1", "myapp", "my-rg", "myapp--abc123", "app", nil)
 	want := []string{
 		"containerapp", "exec",
+		"--subscription", "sub-1",
 		"--name", "myapp",
 		"--resource-group", "my-rg",
 		"--revision", "myapp--abc123",
@@ -25,7 +26,7 @@ func TestBuildAzExecArgs_NoCommand(t *testing.T) {
 }
 
 func TestBuildAzExecArgs_SingleTokenCommand(t *testing.T) {
-	got := buildAzExecArgs("a", "rg", "a--r1", "app", []string{"bash"})
+	got := buildAzExecArgs("sub", "a", "rg", "a--r1", "app", []string{"bash"})
 	// Last two elements should be "--command", "bash".
 	if got[len(got)-2] != "--command" || got[len(got)-1] != "bash" {
 		t.Errorf("tail = %v, want --command bash", got[len(got)-2:])
@@ -33,7 +34,7 @@ func TestBuildAzExecArgs_SingleTokenCommand(t *testing.T) {
 }
 
 func TestBuildAzExecArgs_MultiTokenCommandJoined(t *testing.T) {
-	got := buildAzExecArgs("a", "rg", "r", "c", []string{"ls", "-la", "/srv"})
+	got := buildAzExecArgs("sub", "a", "rg", "r", "c", []string{"ls", "-la", "/srv"})
 	// The whole command should be one joined arg value, not three.
 	wantCmdIdx := -1
 	for i, v := range got {
@@ -78,9 +79,10 @@ func TestBuildAzExecArgs_FlagOrder(t *testing.T) {
 	// Lock in flag order so we don't accidentally emit `--revision`
 	// before `--resource-group` etc., which would still work but hurts
 	// diff-readability when inspecting debug logs.
-	got := buildAzExecArgs("app-1", "rg-1", "r1", "web", []string{"sh"})
+	got := buildAzExecArgs("sub-1", "app-1", "rg-1", "r1", "web", []string{"sh"})
 	expect := []string{
 		"containerapp", "exec",
+		"--subscription", "sub-1",
 		"--name", "app-1",
 		"--resource-group", "rg-1",
 		"--revision", "r1",

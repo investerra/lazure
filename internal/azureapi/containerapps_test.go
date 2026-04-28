@@ -151,7 +151,8 @@ func asyncServer(t *testing.T, pollsBeforeSuccess int32, finalStatus string) *ht
 	var pollCount int32
 
 	mux := http.NewServeMux()
-	var srv *httptest.Server
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
 
 	caPath := "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/containerApps/x"
 	mux.HandleFunc(caPath, func(w http.ResponseWriter, r *http.Request) {
@@ -176,9 +177,6 @@ func asyncServer(t *testing.T, pollsBeforeSuccess int32, finalStatus string) *ht
 			_, _ = w.Write([]byte(`{"status":"Succeeded"}`))
 		}
 	})
-
-	srv = httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
 	return srv
 }
 
@@ -221,6 +219,186 @@ func TestContainerApps_Put_Async_FailedSurfacesError(t *testing.T) {
 	}
 }
 
+func TestContainerApps_Put_AsyncHeaderURLIsPolledAsIs(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	caPath := "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/containerApps/x"
+	mux.HandleFunc(caPath, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			w.Header().Set("Azure-AsyncOperation", srv.URL+"/ops/create?api-version=from-header")
+			w.WriteHeader(http.StatusCreated)
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"type":"Microsoft.App/containerApps","name":"x","location":"sn","properties":{"managedEnvironmentId":"/x","latestRevisionName":"x--new","provisioningState":"Succeeded"}}`))
+		default:
+			t.Errorf("unexpected method = %s", r.Method)
+		}
+	})
+	mux.HandleFunc("/ops/create", func(w http.ResponseWriter, r *http.Request) {
+		values := r.URL.Query()["api-version"]
+		if len(values) != 1 || values[0] != "from-header" {
+			t.Fatalf("api-version query = %v, want only [from-header]", values)
+		}
+		_, _ = w.Write([]byte(`{"status":"Succeeded"}`))
+	})
+
+	c := &ContainerAppsClient{
+		base:   srv.URL,
+		tokens: newTokenProviderWith(&stubCred{token: "tok"}),
+		client: req.C(),
+		delays: []time.Duration{time.Millisecond},
+	}
+
+	got, err := c.PutAndWait(context.Background(), "sub", "rg", "x", &azurearm.ContainerApp{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Properties.LatestRevisionName != "x--new" {
+		t.Errorf("latestRevisionName = %q", got.Properties.LatestRevisionName)
+	}
+}
+
+func TestContainerApps_Put_LocationHeaderUsesHTTPStatusPolling(t *testing.T) {
+	var locationPolls int32
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	caPath := "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/containerApps/x"
+	mux.HandleFunc(caPath, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			w.Header().Set("Location", srv.URL+"/ops/location?api-version=from-header")
+			w.WriteHeader(http.StatusCreated)
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"type":"Microsoft.App/containerApps","name":"x","location":"sn","properties":{"managedEnvironmentId":"/x","latestRevisionName":"x--new","provisioningState":"Succeeded"}}`))
+		default:
+			t.Errorf("unexpected method = %s", r.Method)
+		}
+	})
+	mux.HandleFunc("/ops/location", func(w http.ResponseWriter, r *http.Request) {
+		values := r.URL.Query()["api-version"]
+		if len(values) != 1 || values[0] != "from-header" {
+			t.Fatalf("api-version query = %v, want only [from-header]", values)
+		}
+		if atomic.AddInt32(&locationPolls, 1) == 1 {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	c := &ContainerAppsClient{
+		base:   srv.URL,
+		tokens: newTokenProviderWith(&stubCred{token: "tok"}),
+		client: req.C(),
+		delays: []time.Duration{time.Millisecond, time.Millisecond},
+	}
+
+	got, err := c.PutAndWait(context.Background(), "sub", "rg", "x", &azurearm.ContainerApp{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Properties.LatestRevisionName != "x--new" {
+		t.Errorf("latestRevisionName = %q", got.Properties.LatestRevisionName)
+	}
+	if got := atomic.LoadInt32(&locationPolls); got != 2 {
+		t.Errorf("location polls = %d, want 2", got)
+	}
+}
+
+func TestContainerApps_Put_CreatedWithAsyncHeaderPollsUntilFailed(t *testing.T) {
+	var pollCount int32
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	caPath := "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/containerApps/x"
+	mux.HandleFunc(caPath, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			w.Header().Set("Azure-AsyncOperation", srv.URL+"/ops/create")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"properties":{"provisioningState":"InProgress"}}`))
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"type":"Microsoft.App/containerApps","name":"x","location":"sn","properties":{"managedEnvironmentId":"/x","latestRevisionName":"x--old","provisioningState":"InProgress"}}`))
+		default:
+			t.Errorf("unexpected method = %s", r.Method)
+		}
+	})
+	mux.HandleFunc("/ops/create", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&pollCount, 1)
+		_, _ = w.Write([]byte(`{"status":"Failed","error":{"code":"ContainerAppOperationError","message":"invalid image pull"}}`))
+	})
+
+	c := &ContainerAppsClient{
+		base:   srv.URL,
+		tokens: newTokenProviderWith(&stubCred{token: "tok"}),
+		client: req.C(),
+		delays: []time.Duration{time.Millisecond},
+	}
+
+	_, err := c.PutAndWait(context.Background(), "sub", "rg", "x", &azurearm.ContainerApp{})
+	if err == nil {
+		t.Fatal("expected failed async operation to fail the PUT")
+	}
+	if got := atomic.LoadInt32(&pollCount); got != 1 {
+		t.Fatalf("async operation polled %d times, want 1", got)
+	}
+	if !strings.Contains(err.Error(), "invalid image pull") {
+		t.Errorf("error should include upstream message: %v", err)
+	}
+}
+
+func TestContainerApps_Put_CreatedWithoutAsyncHeaderPollsProvisioningState(t *testing.T) {
+	var getCount int32
+	mux := http.NewServeMux()
+	caPath := "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/containerApps/x"
+
+	mux.HandleFunc(caPath, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"properties":{"provisioningState":"InProgress"}}`))
+		case http.MethodGet:
+			n := atomic.AddInt32(&getCount, 1)
+			state := "InProgress"
+			if n >= 2 {
+				state = "Failed"
+			}
+			_, _ = w.Write([]byte(`{
+				"type":"Microsoft.App/containerApps",
+				"name":"x",
+				"location":"sn",
+				"properties":{
+					"managedEnvironmentId":"/x",
+					"latestRevisionName":"x--old",
+					"provisioningState":"` + state + `"
+				}
+			}`))
+		default:
+			t.Errorf("unexpected method = %s", r.Method)
+		}
+	})
+
+	c, srv := newMockARMClient(t, mux)
+	c.base = srv.URL
+	c.delays = []time.Duration{time.Millisecond}
+
+	_, err := c.PutAndWait(context.Background(), "sub", "rg", "x", &azurearm.ContainerApp{})
+	if err == nil {
+		t.Fatal("expected terminal Failed provisioningState to fail the PUT")
+	}
+	if got := atomic.LoadInt32(&getCount); got != 2 {
+		t.Fatalf("GET count = %d, want 2", got)
+	}
+	if !strings.Contains(err.Error(), "provisioning state Failed") {
+		t.Errorf("error should mention failed provisioning state: %v", err)
+	}
+}
+
 // ---------- PutAndWait: 202 without header ----------
 
 func TestContainerApps_Put_202WithoutHeader(t *testing.T) {
@@ -256,6 +434,32 @@ func TestContainerApps_Poll_ContextCanceled(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cancel") {
 		t.Errorf("error should mention cancellation: %v", err)
+	}
+}
+
+func TestContainerApps_Poll_HTTPErrorDoesNotLoop(t *testing.T) {
+	var polls int32
+	c, _ := newMockARMClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&polls, 1)
+		http.Error(w, `{"error":{"code":"BadRequest","message":"revision failed"}}`, http.StatusBadRequest)
+	}))
+	c.delays = []time.Duration{time.Millisecond}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	err := c.pollAsyncOp(ctx, c.base+"/ops/failed")
+	if err == nil {
+		t.Fatal("expected HTTP 400 from async operation to fail immediately")
+	}
+	if got := atomic.LoadInt32(&polls); got != 1 {
+		t.Fatalf("poll count = %d, want 1", got)
+	}
+	if !strings.Contains(err.Error(), "400") {
+		t.Errorf("error should mention HTTP 400: %v", err)
+	}
+	if !strings.Contains(err.Error(), "revision failed") {
+		t.Errorf("error should include response body: %v", err)
 	}
 }
 

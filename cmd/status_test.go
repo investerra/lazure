@@ -6,6 +6,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/investerra/lazure/internal/azurearm"
 )
@@ -36,25 +40,68 @@ func TestPrintStatusTable_FullApp(t *testing.T) {
 		},
 	}
 
-	out, err := captureStdout(t, func() error { return printStatusTable("dev", app) })
+	out, err := captureStdout(t, func() error {
+		return printStatusTable(statusView{Env: "dev", App: app}, false)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	// Volumes / Registry sections are deliberately hidden when empty —
+	// see printVolumesSection / printRegistrySection. This app has
+	// neither so they should NOT appear.
 	for _, want := range []string{
-		"App:", "api-server",
+		"App:", "Name:", "api-server",
 		"Env:", "dev",
 		"Location:", "switzerlandnorth",
-		"Ingress:", "https://api-server.polite-meadow-abc",
-		"Revision:", "api-server--f3e9b1c",
-		"State:", "Succeeded",
+		"Network:", "URL:", "https://api-server.polite-meadow-abc",
+		"Latest revision:", "api-server--f3e9b1c",
+		"Provisioning:", "Succeeded",
 		"RevisionsMode:", "Single",
-		"Replicas:", "min=1 max=3",
-		"Traffic:", "100% → latest", "(stable)",
+		"Replicas:", "Scale: min=1 max=3",
+		"Traffic:", "100% -> latest", "(stable)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestPrintStatusTable_ColorOnlyAppliesToKVStatusValues(t *testing.T) {
+	prev := lipgloss.DefaultRenderer().ColorProfile()
+	lipgloss.DefaultRenderer().SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.DefaultRenderer().SetColorProfile(prev) })
+
+	app := &azurearm.ContainerApp{
+		Name: "kyc",
+		Properties: azurearm.ContainerAppProperties{
+			LatestRevisionName: "kyc--new",
+			ProvisioningState:  "Failed",
+			RunningStatus:      "Running",
+			Template:           azurearm.Template{Scale: &azurearm.Scale{MinReplicas: 1, MaxReplicas: 1}},
+		},
+	}
+	view := statusView{
+		Env: "dev",
+		App: app,
+		Revs: []azurearm.Revision{{
+			Name: "kyc--new",
+			Properties: azurearm.RevisionProperties{
+				RunningState:      "Failed",
+				HealthState:       "Unhealthy",
+				ProvisioningState: "Failed",
+			},
+		}},
+	}
+	out, err := captureStdout(t, func() error { return printStatusTable(view, true) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Provisioning:") || !strings.Contains(out, "\x1b[") {
+		t.Errorf("expected app key/value status value to be colored:\n%s", out)
+	}
+	if strings.Contains(out, "state=\x1b[") || strings.Contains(out, "health=\x1b[") || strings.Contains(out, "provisioning=\x1b[") {
+		t.Errorf("inline replica key=value fields should not be colorized:\n%s", out)
 	}
 }
 
@@ -68,12 +115,16 @@ func TestPrintStatusTable_NoIngress(t *testing.T) {
 			Template:           azurearm.Template{Scale: &azurearm.Scale{MinReplicas: 1, MaxReplicas: 1}},
 		},
 	}
-	out, err := captureStdout(t, func() error { return printStatusTable("prd", app) })
+	out, err := captureStdout(t, func() error {
+		return printStatusTable(statusView{Env: "prd", App: app}, false)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out, "Ingress:") {
-		t.Errorf("should not show ingress for worker apps: %q", out)
+	// Worker apps drop the Network section entirely — no "Ingress: none"
+	// noise, no Traffic block, just the App + Replicas blocks.
+	if strings.Contains(out, "Network:") {
+		t.Errorf("worker app should not render the Network section: %q", out)
 	}
 	if strings.Contains(out, "Traffic:") {
 		t.Errorf("should not show traffic without ingress: %q", out)
@@ -99,15 +150,121 @@ func TestPrintStatusTable_BlueGreenTraffic(t *testing.T) {
 			},
 		},
 	}
-	out, err := captureStdout(t, func() error { return printStatusTable("dev", app) })
+	out, err := captureStdout(t, func() error {
+		return printStatusTable(statusView{Env: "dev", App: app}, false)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "80% → latest") || !strings.Contains(out, "(canary)") {
+	if !strings.Contains(out, "80% -> latest") || !strings.Contains(out, "(canary)") {
 		t.Errorf("missing canary line: %q", out)
 	}
-	if !strings.Contains(out, "20% → api-server--old") || !strings.Contains(out, "(stable)") {
+	if !strings.Contains(out, "20% -> api-server--old") || !strings.Contains(out, "(stable)") {
 		t.Errorf("missing stable line: %q", out)
+	}
+}
+
+func TestPrintStatusTable_ReplicasVolumesNetworkRegistry(t *testing.T) {
+	app := &azurearm.ContainerApp{
+		Name:     "kyc",
+		Location: "switzerlandnorth",
+		Properties: azurearm.ContainerAppProperties{
+			LatestRevisionName:      "kyc--new",
+			LatestReadyRevisionName: "kyc--old",
+			ProvisioningState:       "Failed",
+			RunningStatus:           "Running",
+			Configuration: azurearm.Configuration{
+				ActiveRevisionsMode: "Multiple",
+				Registries: []azurearm.Registry{{
+					Server:   "exampleacr.azurecr.io",
+					Identity: "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/kyc-identity",
+				}},
+				Ingress: &azurearm.Ingress{
+					External:      true,
+					FQDN:          "kyc.example.azurecontainerapps.io",
+					TargetPort:    8080,
+					Transport:     "auto",
+					AllowInsecure: true,
+					IPSecurityRestrictions: []azurearm.IPSecurityRestriction{{
+						Name: "office", Action: "Allow", IPAddressRange: "10.0.0.0/24",
+					}},
+					CorsPolicy: &azurearm.CorsPolicy{
+						AllowedOrigins: []string{"*"},
+						AllowedMethods: []string{"GET", "POST"},
+					},
+					Traffic: []azurearm.TrafficEntry{
+						{Weight: 100, RevisionName: "kyc--old", Label: "stable"},
+					},
+				},
+			},
+			Template: azurearm.Template{
+				Scale: &azurearm.Scale{MinReplicas: 1, MaxReplicas: 3, CooldownPeriod: 300, PollingInterval: 30},
+				Volumes: []azurearm.Volume{
+					{Name: "uploads", StorageType: "AzureFile", StorageName: "uploads-share"},
+					{Name: "scratch", StorageType: "EmptyDir"},
+				},
+				Containers: []azurearm.Container{{
+					Name: "app",
+					VolumeMounts: []azurearm.VolumeMount{{
+						VolumeName: "uploads", MountPath: "/mnt/uploads",
+					}},
+				}},
+			},
+		},
+	}
+	view := statusView{
+		Env: "dev",
+		App: app,
+		Revs: []azurearm.Revision{
+			{Name: "kyc--new", Properties: azurearm.RevisionProperties{
+				CreatedTime:       time.Now(),
+				Replicas:          1,
+				ProvisioningState: "Failed",
+				HealthState:       "Unhealthy",
+				RunningState:      "Failed",
+			}},
+			{Name: "kyc--old", Properties: azurearm.RevisionProperties{
+				Active:            true,
+				Replicas:          1,
+				TrafficWeight:     100,
+				ProvisioningState: "Provisioned",
+				HealthState:       "Healthy",
+				RunningState:      "Running",
+			}},
+		},
+		Replicas: map[string][]azurearm.Replica{
+			"kyc--old": {{
+				Name: "kyc--old-abc",
+				Properties: azurearm.ReplicaProperties{
+					RunningState: "Running",
+					Containers: []azurearm.ReplicaContainer{{
+						Name: "app", Ready: true,
+					}},
+				},
+			}},
+		},
+	}
+	out, err := captureStdout(t, func() error { return printStatusTable(view, false) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Network:",
+		"Target:", "port=8080 transport=auto",
+		"Insecure HTTP:", "yes",
+		"IP rules:", "office Allow 10.0.0.0/24",
+		"CORS:", "origins=* methods=2 credentials=no",
+		"Rollout: latest kyc--new is not ready; serving kyc--old",
+		"kyc--new", "state=Failed", "health=Unhealthy", "provisioning=Failed",
+		"kyc--old", "traffic=100%", "ready=1/1",
+		"kyc--old-abc", "containers=app:ready",
+		"Volumes:", "uploads  AzureFile storage=uploads-share", "app: /mnt/uploads",
+		"scratch  EmptyDir", "unmounted",
+		"Registry:", "exampleacr.azurecr.io", "identity=/subscriptions/sub",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
 	}
 }
 
@@ -179,4 +336,3 @@ func TestStatus_CLIRun(t *testing.T) {
 	// real Azure happens in live smoke tests. Skip this harder path.
 	t.Skip("full CLI path requires mocking azureapi client — covered by formatter tests + live smoke")
 }
-

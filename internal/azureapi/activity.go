@@ -24,6 +24,7 @@ const ActivityLogAPIVersion = "2015-04-01"
 type ActivityEvent struct {
 	EventTimestamp time.Time `json:"eventTimestamp"`
 	Caller         string    `json:"caller"`
+	Level          string    `json:"level"`
 	OperationName  struct {
 		Value          string `json:"value"`
 		LocalizedValue string `json:"localizedValue"`
@@ -32,8 +33,19 @@ type ActivityEvent struct {
 		Value          string `json:"value"`
 		LocalizedValue string `json:"localizedValue"`
 	} `json:"status"`
-	ResourceID    string `json:"resourceId"`
-	CorrelationID string `json:"correlationId"`
+	ResourceID    string                  `json:"resourceId"`
+	CorrelationID string                  `json:"correlationId"`
+	OperationID   string                  `json:"operationId"`
+	EventDataID   string                  `json:"eventDataId"`
+	Properties    ActivityEventProperties `json:"properties"`
+}
+
+type ActivityEventProperties struct {
+	StatusMessage string `json:"statusMessage,omitempty"`
+	Message       string `json:"message,omitempty"`
+	Entity        string `json:"entity,omitempty"`
+	EventCategory string `json:"eventCategory,omitempty"`
+	Hierarchy     string `json:"hierarchy,omitempty"`
 }
 
 type activityLogResponse struct {

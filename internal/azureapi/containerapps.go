@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/imroc/req/v3"
@@ -18,6 +19,12 @@ import (
 // armAPIVersion pins us to the 2024-03-01 Azure ARM Container Apps API.
 // Update here and in azurearm/schema.go docs when bumping.
 const armAPIVersion = "2024-03-01"
+
+// provisioningPollTimeout caps how long we wait for an ARM async
+// operation or post-PUT GET-loop to reach a terminal state. ACA can
+// genuinely take 5-10 min on cold-start image pulls; 30 min is the
+// outer envelope before we conclude something is stuck.
+const provisioningPollTimeout = 30 * time.Minute
 
 // armBaseURL is the global ARM endpoint. Sovereign clouds use a
 // different base (e.g. .us, .cn) but Investerra runs on public Azure
@@ -85,8 +92,9 @@ func (c *ContainerAppsClient) Get(ctx context.Context, sub, rg, name string) (*a
 // (GET after success) so callers can read latestRevisionName etc.
 //
 // Azure responds to ACA PUTs with either:
-//   - 200 / 201 for fast sync updates
-//   - 202 + Azure-AsyncOperation header for slower deploys
+//   - 200 for completed updates / no-ops
+//   - 201 for create/update started
+//   - 202 for accepted async operations
 //
 // Both paths produce the same return value.
 func (c *ContainerAppsClient) PutAndWait(ctx context.Context, sub, rg, name string, body *azurearm.ContainerApp) (*azurearm.ContainerApp, error) {
@@ -174,8 +182,9 @@ func (c *ContainerAppsClient) PatchScaleAndWait(ctx context.Context, sub, rg, na
 
 // waitForCompletion handles the sync-or-async response dance shared by
 // PUT and PATCH. On sync (200/201) and async (202) we converge on the
-// same final step — a GET against the resource — so callers always
-// observe a settled, read-after-write-consistent view.
+// same final step — GETs against the resource until its provisioning
+// state is terminal — so callers always observe a settled,
+// read-after-write-consistent view.
 //
 // We deliberately do NOT decode the sync PUT/PATCH response body for
 // the return value: ARM's sync responses sometimes omit read-only
@@ -186,27 +195,85 @@ func (c *ContainerAppsClient) PatchScaleAndWait(ctx context.Context, sub, rg, na
 // in cmd/deploy.go). The follow-up GET returns the populated state.
 func (c *ContainerAppsClient) waitForCompletion(ctx context.Context, sub, rg, name string, resp *req.Response, verb string) (*azurearm.ContainerApp, error) {
 	switch resp.StatusCode {
-	case http.StatusOK, http.StatusCreated:
-		slog.Debug("containerapps: sync response — refetching for read-after-write consistency", "verb", verb)
-		return c.Get(ctx, sub, rg, name)
-
-	case http.StatusAccepted:
-		opURL := resp.Header.Get("Azure-AsyncOperation")
-		if opURL == "" {
-			opURL = resp.Header.Get("Location")
-		}
-		if opURL == "" {
+	case http.StatusOK, http.StatusCreated, http.StatusAccepted:
+		opURL, statusBody := asyncOperationURL(resp)
+		if resp.StatusCode == http.StatusAccepted && opURL == "" {
 			return nil, errs.Errorf("containerapps: %s returned 202 but no Azure-AsyncOperation or Location header", verb)
 		}
-		slog.Debug("containerapps: polling async op", "url", opURL, "verb", verb)
-		if err := c.pollAsyncOp(ctx, opURL); err != nil {
+		if opURL != "" {
+			slog.Debug("containerapps: polling async op", "url", opURL, "verb", verb, "http", resp.StatusCode)
+			if statusBody {
+				if err := c.pollAsyncOp(ctx, opURL); err != nil {
+					return nil, err
+				}
+			} else {
+				if err := c.pollLocation(ctx, opURL); err != nil {
+					return nil, err
+				}
+			}
+		} else {
+			slog.Debug("containerapps: response has no async operation header — refetching resource state", "verb", verb, "http", resp.StatusCode)
+		}
+		app, err := c.Get(ctx, sub, rg, name)
+		if err != nil {
 			return nil, err
 		}
-		return c.Get(ctx, sub, rg, name)
+		return c.waitForProvisioningState(ctx, sub, rg, name, app, verb)
 
 	default:
 		return nil, errs.Errorf("containerapps: %s %s/%s: %s %s",
 			verb, rg, name, resp.Status, resp.String())
+	}
+}
+
+func asyncOperationURL(resp *req.Response) (string, bool) {
+	if resp == nil {
+		return "", false
+	}
+	if opURL := resp.Header.Get("Azure-AsyncOperation"); opURL != "" {
+		return opURL, true
+	}
+	return resp.Header.Get("Location"), false
+}
+
+func (c *ContainerAppsClient) waitForProvisioningState(ctx context.Context, sub, rg, name string, app *azurearm.ContainerApp, verb string) (*azurearm.ContainerApp, error) {
+	deadline := time.Now().Add(provisioningPollTimeout)
+	for i := 0; ; i++ {
+		state := app.Properties.ProvisioningState
+		switch state {
+		case "", "Succeeded":
+			return app, nil
+		case "Failed", "Canceled", "Cancelled":
+			return nil, errs.Errorf("containerapps: %s %s/%s reached provisioning state %s",
+				verb, rg, name, state)
+		default:
+			slog.Debug("containerapps: resource provisioning still in progress",
+				"state", state,
+				"verb", verb,
+				"poll_iteration", i)
+		}
+		if time.Now().After(deadline) {
+			return nil, errs.Errorf("containerapps: %s %s/%s stuck in %q after %s",
+				verb, rg, name, state, provisioningPollTimeout)
+		}
+
+		var delay time.Duration
+		if i < len(c.delays) {
+			delay = c.delays[i]
+		} else {
+			delay = c.maxDelay
+		}
+		select {
+		case <-ctx.Done():
+			return nil, errs.Wrap(ctx.Err(), "containerapps: provisioning poll cancelled")
+		case <-time.After(delay):
+		}
+
+		next, err := c.Get(ctx, sub, rg, name)
+		if err != nil {
+			return nil, errs.Wrapf(err, "containerapps: provisioning poll: GET %s/%s", rg, name)
+		}
+		app = next
 	}
 }
 
@@ -307,12 +374,19 @@ func (c *ContainerAppsClient) RestartRevision(ctx context.Context, sub, rg, name
 
 // pollAsyncOp polls an Azure-AsyncOperation URL until it reaches a
 // terminal state. Delays follow the Fibonacci-ish sequence
-// {2, 3, 5, 8, 13, 21}s then hold at maxDelay (30s).
+// {2, 3, 5, 8, 13, 21}s then hold at maxDelay (30s); we also cap the
+// total wall-clock to provisioningPollTimeout so a stuck Azure
+// operation can't hang the CLI forever.
 //
 // Returns nil on Succeeded; wrapped error on Failed/Canceled.
 // Cancellation of ctx stops polling and returns ctx.Err().
 func (c *ContainerAppsClient) pollAsyncOp(ctx context.Context, url string) error {
+	url = ensureAPIVersion(url)
+	deadline := time.Now().Add(provisioningPollTimeout)
 	for i := 0; ; i++ {
+		if time.Now().After(deadline) {
+			return errs.Errorf("containerapps: async operation poll timed out after %s", provisioningPollTimeout)
+		}
 		var delay time.Duration
 		if i < len(c.delays) {
 			delay = c.delays[i]
@@ -326,7 +400,7 @@ func (c *ContainerAppsClient) pollAsyncOp(ctx context.Context, url string) error
 		case <-time.After(delay):
 		}
 
-		r, err := c.armRequest(ctx)
+		r, err := c.operationRequest(ctx)
 		if err != nil {
 			return err
 		}
@@ -342,6 +416,10 @@ func (c *ContainerAppsClient) pollAsyncOp(ctx context.Context, url string) error
 			"status", opStatus.Status,
 			"http", resp.StatusCode,
 			"poll_iteration", i)
+		if !resp.IsSuccessState() {
+			return errs.Errorf("containerapps: async operation poll failed: %s %s",
+				resp.Status, resp.String())
+		}
 
 		switch opStatus.Status {
 		case "Succeeded":
@@ -353,6 +431,50 @@ func (c *ContainerAppsClient) pollAsyncOp(ctx context.Context, url string) error
 			// keep polling
 		default:
 			return errs.Errorf("containerapps: unknown async status %q", opStatus.Status)
+		}
+	}
+}
+
+func (c *ContainerAppsClient) pollLocation(ctx context.Context, url string) error {
+	url = ensureAPIVersion(url)
+	deadline := time.Now().Add(provisioningPollTimeout)
+	for i := 0; ; i++ {
+		if time.Now().After(deadline) {
+			return errs.Errorf("containerapps: async location poll timed out after %s", provisioningPollTimeout)
+		}
+		var delay time.Duration
+		if i < len(c.delays) {
+			delay = c.delays[i]
+		} else {
+			delay = c.maxDelay
+		}
+
+		select {
+		case <-ctx.Done():
+			return errs.Wrap(ctx.Err(), "containerapps: location poll cancelled")
+		case <-time.After(delay):
+		}
+
+		r, err := c.operationRequest(ctx)
+		if err != nil {
+			return err
+		}
+		resp, err := r.Get(url)
+		if err != nil {
+			return errs.Wrap(err, "containerapps: location poll")
+		}
+		slog.Debug("containerapps: async location",
+			"http", resp.StatusCode,
+			"poll_iteration", i)
+
+		switch resp.StatusCode {
+		case http.StatusOK, http.StatusNoContent:
+			return nil
+		case http.StatusAccepted:
+			continue
+		default:
+			return errs.Errorf("containerapps: async location poll failed: %s %s",
+				resp.Status, resp.String())
 		}
 	}
 }
@@ -371,4 +493,38 @@ func (c *ContainerAppsClient) armRequest(ctx context.Context) (*req.Request, err
 		SetQueryParam("api-version", armAPIVersion).
 		SetHeader("Content-Type", "application/json")
 	return r, nil
+}
+
+// operationRequest is for polling Azure-AsyncOperation / Location URLs
+// returned in PUT/PATCH async response headers. Those URLs typically
+// embed `api-version` themselves (Azure echoes one tied to the
+// underlying operation, which can differ from armAPIVersion), so we
+// don't re-append it. See pollAndAttachAPIVersion for the safety net
+// when Azure omits it entirely.
+func (c *ContainerAppsClient) operationRequest(ctx context.Context) (*req.Request, error) {
+	tok, err := c.tokens.Management(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.client.R().
+		SetContext(ctx).
+		SetBearerAuthToken(tok).
+		SetHeader("Content-Type", "application/json"), nil
+}
+
+// ensureAPIVersion guarantees the polling URL carries an `api-version`
+// query parameter. ARM specifies that Azure-AsyncOperation/Location
+// URLs SHOULD include one, but the spec is "should" not "must" and
+// we've observed cases where they don't — without one the poll comes
+// back 400 InvalidApiVersionParameter. This is a no-op when Azure
+// already supplied a version (the common case).
+func ensureAPIVersion(rawURL string) string {
+	if strings.Contains(rawURL, "api-version=") {
+		return rawURL
+	}
+	sep := "?"
+	if strings.Contains(rawURL, "?") {
+		sep = "&"
+	}
+	return rawURL + sep + "api-version=" + armAPIVersion
 }

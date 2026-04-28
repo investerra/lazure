@@ -70,6 +70,13 @@ func Exec(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		return err
 	}
+	if t.Sub == "" {
+		// loadAzureTarget normally fills this from `az account show`, but
+		// guard explicitly so we never hand `az` an empty `--subscription`
+		// value (which it rejects with a misleading error about the
+		// subscription not existing).
+		return errs.Usage(errs.New("exec: subscription is empty — run `az login` or set AZURE_SUBSCRIPTION_ID"))
+	}
 	slog.Debug("exec: start",
 		"env", t.Env, "container", container, "revision", rev, "cmd", cmdArgs)
 
@@ -88,7 +95,7 @@ func Exec(ctx context.Context, c *cli.Command) error {
 		slog.Debug("exec: resolved revision", "revision", rev)
 	}
 
-	azArgs := buildAzExecArgs(t.Name, t.RG, rev, container, cmdArgs)
+	azArgs := buildAzExecArgs(t.Sub, t.Name, t.RG, rev, container, cmdArgs)
 	slog.Info("exec: launching az containerapp exec",
 		"app", t.Name, "revision", rev, "container", container, "cmd", cmdArgs)
 	slog.Debug("exec: az args", "args", azArgs)
@@ -117,9 +124,10 @@ func Exec(ctx context.Context, c *cli.Command) error {
 //
 // When cmdArgs is empty, --command is omitted entirely and az falls
 // back to its default (`sh`), giving an interactive shell.
-func buildAzExecArgs(name, rg, rev, container string, cmdArgs []string) []string {
+func buildAzExecArgs(sub, name, rg, rev, container string, cmdArgs []string) []string {
 	out := []string{
 		"containerapp", "exec",
+		"--subscription", sub,
 		"--name", name,
 		"--resource-group", rg,
 		"--revision", rev,
