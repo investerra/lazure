@@ -5,6 +5,10 @@ inputs:
   version:
     description: Lazure release version to install, for example v0.7.0.
     required: true
+  github-token:
+    description: Token with read access to investerra/lazure release assets.
+    required: false
+    default: ${{ github.token }}
 
 runs:
   using: composite
@@ -20,4 +24,5 @@ runs:
       env:
         ACTION_PATH: ${{ github.action_path }}
         LAZURE_VERSION: ${{ inputs.version }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
       run: bash "$ACTION_PATH/../_lib/install-lazure.sh"

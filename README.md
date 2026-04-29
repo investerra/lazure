@@ -79,6 +79,11 @@ This repo exports composite actions for app repositories that want to run
 Lazure from CI. Install Lazure once, then call the task actions. The task
 actions assume `lazure` is already available in `PATH`.
 
+For private `investerra/lazure` releases, pass a token that can read this
+repository's release assets. A caller repo's default `GITHUB_TOKEN` usually
+cannot read a different private repository, so use a PAT or GitHub App token
+stored as a secret.
+
 ```yaml
 permissions:
   contents: read
@@ -95,7 +100,10 @@ steps:
 
   - uses: investerra/lazure/actions/install@v1
     with:
-      version: v0.7.0
+      version: v0.7.1
+      # Required when the caller repo cannot read private lazure releases
+      # with its default GITHUB_TOKEN.
+      github-token: ${{ secrets.LAZURE_RELEASE_TOKEN }}
 
   - uses: investerra/lazure/actions/validate@v1
     with:

@@ -126,6 +126,23 @@ test_install_from_cached_binary() {
   grep -q "$bin_dir" "$path" || fail "install did not add cached binary dir to PATH"
 }
 
+test_install_requires_token_on_cache_miss() {
+  local tmp
+  tmp="$(mktemp -d)"
+
+  if GITHUB_PATH="$tmp/path" \
+    RUNNER_TEMP="$tmp" \
+    RUNNER_OS=Linux \
+    RUNNER_ARCH=X64 \
+    RUNNER_TOOL_CACHE="$tmp/toolcache" \
+    GITHUB_TOKEN= \
+    LAZURE_VERSION=0.7.0 \
+    bash "$LIB_DIR/install-lazure.sh" 2>/tmp/lazure-action-test.err; then
+    fail "install without token unexpectedly succeeded on cache miss"
+  fi
+  grep -q "GITHUB_TOKEN is required" /tmp/lazure-action-test.err || fail "missing token error was not useful"
+}
+
 test_actions_do_not_build_from_source() {
   local forbidden
   forbidden="go[ ]build|actions/setup""-go"
@@ -145,8 +162,9 @@ test_dependent_actions_assume_lazure_on_path() {
 test_install_action_surface() {
   local action_yml="$LIB_DIR/../install/action.yml"
   grep -q '^  version:$' "$action_yml" || fail "install action must expose version input"
-  if grep -q 'repository:\|github-token:\|outputs:\|lazure-bin\|LAZURE_BIN' "$action_yml"; then
-    fail "install action exposes more than version/PATH installation"
+  grep -q '^  github-token:$' "$action_yml" || fail "install action must expose github-token input"
+  if grep -q 'repository:\|outputs:\|lazure-bin\|LAZURE_BIN' "$action_yml"; then
+    fail "install action exposes unsupported install details"
   fi
 }
 
@@ -156,6 +174,7 @@ test_sync_secrets
 test_validate
 test_invalid_bool_fails
 test_install_from_cached_binary
+test_install_requires_token_on_cache_miss
 test_actions_do_not_build_from_source
 test_dependent_actions_assume_lazure_on_path
 test_install_action_surface
