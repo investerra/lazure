@@ -74,15 +74,25 @@ type Configuration struct {
 type Ingress struct {
 	External               bool                    `json:"external"`
 	TargetPort             int                     `json:"targetPort"`
-	Transport              string                  `json:"transport,omitempty"`     // lowercase: auto | http | http2 | tcp
+	Transport              string                  `json:"transport,omitempty"` // lowercase: auto | http | http2 | tcp
 	AllowInsecure          bool                    `json:"allowInsecure,omitempty"`
 	CorsPolicy             *CorsPolicy             `json:"corsPolicy,omitempty"`
 	IPSecurityRestrictions []IPSecurityRestriction `json:"ipSecurityRestrictions,omitempty"`
+	CustomDomains          []CustomDomain          `json:"customDomains,omitempty"`
 	Traffic                []TrafficEntry          `json:"traffic,omitempty"`
 
 	// FQDN is read-only on GET — Azure publishes the assigned hostname
 	// once the app has ingress. omitempty so we never write it on PUT.
 	FQDN string `json:"fqdn,omitempty"`
+}
+
+// CustomDomain is external state in Lazure: deploy preserves domains
+// already attached to the Container App, but deploy.yml does not manage
+// domain or certificate lifecycle.
+type CustomDomain struct {
+	Name          string `json:"name"`
+	BindingType   string `json:"bindingType,omitempty"`
+	CertificateID string `json:"certificateId,omitempty"`
 }
 
 type CorsPolicy struct {

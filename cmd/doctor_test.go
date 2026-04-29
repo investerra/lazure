@@ -246,10 +246,15 @@ func TestRenderDoctorText_AllPassPlain(t *testing.T) {
 	}}
 	got := renderDoctorText(s, false)
 	for _, want := range []string{
-		"global checks", "[✓]", "git", "2.43.0", "editor", "$EDITOR=vim", "all checks passed",
+		"Global Checks", "OK", "git", "2.43.0", "editor", "$EDITOR=vim", "all checks passed",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"summary", "result", "ready\n"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("unexpected %q in:\n%s", unwanted, got)
 		}
 	}
 	if strings.Contains(got, "\x1b[") {
@@ -263,11 +268,14 @@ func TestRenderDoctorText_WarnHasBangMark(t *testing.T) {
 		results: []checkResult{{status: statusWarn, name: "az", detail: "not installed"}},
 	}}
 	got := renderDoctorText(s, false)
-	if !strings.Contains(got, "[!]") {
-		t.Errorf("expected [!] for warn, got:\n%s", got)
+	if !strings.Contains(got, "WARN") {
+		t.Errorf("expected WARN for warn, got:\n%s", got)
 	}
 	if !strings.Contains(got, "all checks passed") {
 		t.Errorf("warn alone should still pass overall")
+	}
+	if strings.Contains(got, "ready with warnings") {
+		t.Errorf("summary should not be rendered, got:\n%s", got)
 	}
 }
 
@@ -281,18 +289,28 @@ func TestRenderDoctorText_FailShowsDetailContinuation(t *testing.T) {
 			{
 				env:     "uat",
 				status:  statusFail,
-				overall: "vars ✓  secrets decrypt ✗  manifest renders —  KV reachable —",
+				overall: "vars pass  secrets decrypt fail  manifest renders skip  KV reachable skip",
+				stages: map[string]checkStatus{
+					"vars":             statusPass,
+					"secrets decrypt":  statusFail,
+					"manifest renders": statusSkip,
+					"sub reachable":    statusSkip,
+					"KV reachable":     statusSkip,
+				},
 				failMsg: "sops decrypt: key vault permission denied",
 			},
 		},
 	}}
 	got := renderDoctorText(s, false)
 	for _, want := range []string{
-		"[✗]", "uat", "secrets decrypt ✗", "└─", "permission denied", "one or more checks failed",
+		"Project Checks", "FAIL", "Environments", "uat", "secrets", "Findings", "permission denied", "one or more checks failed",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "uat  FAIL") {
+		t.Errorf("environment heading should not include adjacent status, got:\n%s", got)
 	}
 }
 
@@ -325,8 +343,8 @@ func TestRenderDoctorJSON_Shape(t *testing.T) {
 	}, {
 		name: "project checks",
 		envChecks: []envCheck{
-			{env: "dev", status: statusPass, overall: "everything ✓"},
-			{env: "uat", status: statusFail, overall: "vars ✓  secrets decrypt ✗", failMsg: "denied"},
+			{env: "dev", status: statusPass, overall: "everything pass"},
+			{env: "uat", status: statusFail, overall: "vars pass  secrets decrypt fail", failMsg: "denied"},
 		},
 	}}
 	out, err := renderDoctorJSON(s)
@@ -375,6 +393,33 @@ func TestRunProjectChecks_NoManifestReturnsNil(t *testing.T) {
 	dir := t.TempDir()
 	if got := runProjectChecks(t.Context(), dir); got != nil {
 		t.Errorf("expected nil section when no manifest; got %+v", got)
+	}
+}
+
+func TestRunProjectChecks_ListsEnvsEvenWhenManifestMissing(t *testing.T) {
+	dir := t.TempDir()
+	envsDir := filepath.Join(dir, "envs")
+	if err := os.MkdirAll(envsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"dev.vars.yml", "uat.vars.yml"} {
+		if err := os.WriteFile(filepath.Join(envsDir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sec := runProjectChecks(t.Context(), dir)
+	if sec == nil {
+		t.Fatal("expected project section")
+	}
+	var envsDetail string
+	for _, r := range sec.results {
+		if r.name == "envs" {
+			envsDetail = r.detail
+		}
+	}
+	if envsDetail != "dev, uat" {
+		t.Fatalf("envs detail = %q", envsDetail)
 	}
 }
 

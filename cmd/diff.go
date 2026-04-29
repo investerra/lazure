@@ -57,13 +57,18 @@ func Diff(ctx context.Context, c *cli.Command) error {
 	}
 
 	slog.Debug("diff: fetching deployed app state")
-	actual, err := t.CA.Get(ctx, t.Sub, t.RG, t.Name)
+	state, err := t.CA.GetState(ctx, t.Sub, t.RG, t.Name)
+	var unsupportedFields []string
+	var actual *azurearm.ContainerApp
 	switch {
 	case errors.Is(err, azureapi.ErrContainerAppNotFound):
 		slog.Info("app not deployed yet — diff treats deployed-side as empty", "app", t.Name)
 		actual = &azurearm.ContainerApp{}
 	case err != nil:
 		return errs.System(errs.Wrap(err, "diff: fetch deployed state"))
+	default:
+		actual = state.App
+		unsupportedFields = azureapi.UnsupportedLiveStateFields(state.Raw)
 	}
 
 	// Build expected from the manifest. If actual is a real deployed
@@ -91,7 +96,15 @@ func Diff(ctx context.Context, c *cli.Command) error {
 		return errs.System(errs.Wrap(err, "diff: marshal actual"))
 	}
 
-	if string(expectedBytes) == string(actualBytes) {
+	same := string(expectedBytes) == string(actualBytes)
+	if len(unsupportedFields) > 0 && !same {
+		printUnsupportedLiveState("diff", unsupportedFields)
+	}
+
+	if same {
+		if len(unsupportedFields) > 0 {
+			return errs.Drift(unsupportedLiveStateError("diff", unsupportedFields))
+		}
 		slog.Info("no drift", "env", t.Env, "app", t.Name)
 		return nil
 	}

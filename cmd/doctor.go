@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/urfave/cli/v3"
@@ -43,13 +45,16 @@ func Doctor(ctx context.Context, c *cli.Command) error {
 	color := shouldColor(c.Bool("no-color"))
 	dir := c.String("dir")
 	slog.Debug("doctor: start", "dir", dir, "format", format, "color", color)
+	progress := newDoctorProgress()
+	defer progress.Stop()
 
 	sections := []section{
-		{name: "global checks", results: runGlobalChecks(ctx)},
+		{name: "global checks", results: runGlobalChecks(ctx, progress)},
 	}
-	if proj := runProjectChecks(ctx, dir); proj != nil {
+	if proj := runProjectChecksWithProgress(ctx, dir, progress); proj != nil {
 		sections = append(sections, *proj)
 	}
+	progress.Stop()
 
 	switch format {
 	case "", "text":
@@ -106,7 +111,8 @@ type envCheck struct {
 	env     string
 	status  checkStatus // worst of the subchecks; determines the env line's mark
 	overall string      // e.g. "vars ✓  secrets decrypt ✓  manifest renders ✓  KV reachable ✓"
-	failMsg string      // populated only on failure — the underlying error text
+	stages  map[string]checkStatus
+	failMsg string // populated only on failure — the underlying error text
 }
 
 type section struct {
@@ -117,14 +123,55 @@ type section struct {
 
 // ---------- global checks ----------
 
-func runGlobalChecks(ctx context.Context) []checkResult {
-	return []checkResult{
-		checkGit(),
-		checkEditor(),
-		checkAz(),
-		checkGH(),
-		checkAzureAuth(ctx),
+type doctorProgress struct {
+	sp *waitSpinner
+}
+
+func newDoctorProgress() *doctorProgress {
+	sp := newWaitSpinner(time.Time{})
+	sp.SetMessage("doctor: starting checks")
+	sp.Start()
+	return &doctorProgress{sp: sp}
+}
+
+func (p *doctorProgress) Set(msg string) {
+	if p == nil || p.sp == nil {
+		return
 	}
+	p.sp.SetMessage(msg)
+}
+
+func (p *doctorProgress) Stop() {
+	if p == nil || p.sp == nil {
+		return
+	}
+	p.sp.Stop()
+}
+
+func runGlobalChecks(ctx context.Context, progress *doctorProgress) []checkResult {
+	checks := []struct {
+		label string
+		fn    func() checkResult
+	}{
+		{label: "checking git", fn: checkGit},
+		{label: "checking editor", fn: checkEditor},
+		{label: "checking az", fn: checkAz},
+		{label: "checking gh", fn: checkGH},
+		{label: "checking Azure auth", fn: func() checkResult { return checkAzureAuth(ctx) }},
+	}
+	results := make([]checkResult, len(checks))
+	var wg sync.WaitGroup
+	for i, check := range checks {
+		i, check := i, check
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			progress.Set(check.label)
+			results[i] = check.fn()
+		}()
+	}
+	wg.Wait()
+	return results
 }
 
 func checkGit() checkResult {
@@ -179,7 +226,7 @@ func checkAz() checkResult {
 	return checkResult{
 		status: statusPass,
 		name:   "az",
-		detail: compactFirstLine(string(out)) + " (optional — required only for `lazure exec`)",
+		detail: compactFirstLine(string(out)) + " (optional; required only for `lazure exec`)",
 	}
 }
 
@@ -202,7 +249,7 @@ func checkGH() checkResult {
 	return checkResult{
 		status: statusPass,
 		name:   "gh",
-		detail: compactFirstLine(string(out)) + " (optional — required only for `lazure release --wait`)",
+		detail: compactFirstLine(string(out)) + " (optional; required only for `lazure release --wait`)",
 	}
 }
 
@@ -234,7 +281,7 @@ func checkAzureAuth(ctx context.Context) checkResult {
 	return checkResult{
 		status: statusPass,
 		name:   "azure auth",
-		detail: "DefaultAzureCredential → management.azure.com",
+		detail: "DefaultAzureCredential to management.azure.com",
 	}
 }
 
@@ -245,30 +292,66 @@ func checkAzureAuth(ctx context.Context) checkResult {
 // returns a populated section with a manifest-found result and one
 // envCheck per discovered env.
 func runProjectChecks(ctx context.Context, dir string) *section {
+	return runProjectChecksWithProgress(ctx, dir, nil)
+}
+
+func runProjectChecksWithProgress(ctx context.Context, dir string, progress *doctorProgress) *section {
+	progress.Set("checking project files")
 	manifestPath := findManifest(dir)
-	if manifestPath == "" {
+	envs := discoverEnvs(dir)
+	if manifestPath == "" && len(envs) == 0 {
 		slog.Debug("doctor: no manifest in dir, skipping project section", "dir", dir)
 		return nil
 	}
 	sec := &section{
-		name: "project checks",
-		results: []checkResult{
-			{status: statusPass, name: "manifest", detail: "found at " + manifestPath},
-		},
+		name:    "project checks",
+		results: projectPathChecks(dir, manifestPath, envs),
 	}
-	envs := discoverEnvs(dir)
-	if len(envs) == 0 {
-		sec.results = append(sec.results, checkResult{
-			status: statusWarn,
-			name:   "envs",
-			detail: "no envs/*.vars.yml found",
-		})
+	if manifestPath == "" {
 		return sec
 	}
-	for _, env := range envs {
-		sec.envChecks = append(sec.envChecks, checkEnv(ctx, dir, env))
+	if len(envs) == 0 {
+		return sec
 	}
+	sec.envChecks = make([]envCheck, len(envs))
+	var wg sync.WaitGroup
+	for i, env := range envs {
+		i, env := i, env
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sec.envChecks[i] = checkEnvWithProgress(ctx, dir, env, progress)
+		}()
+	}
+	wg.Wait()
 	return sec
+}
+
+func projectPathChecks(dir, manifestPath string, envs []string) []checkResult {
+	envsDir := filepath.Join(dir, "envs")
+	manifest := checkResult{status: statusPass, name: "manifest", detail: manifestPath}
+	if manifestPath == "" {
+		manifest = checkResult{status: statusFail, name: "manifest", detail: "not found at " + filepath.Join(dir, "deploy.yml")}
+	}
+	envList := checkResult{status: statusPass, name: "envs", detail: strings.Join(envs, ", ")}
+	if len(envs) == 0 {
+		envList = checkResult{status: statusWarn, name: "envs", detail: "no envs/*.vars.yml found"}
+	}
+	return []checkResult{
+		{status: statusPass, name: "project dir", detail: filepath.Clean(dir)},
+		manifest,
+		pathCheck("envs dir", envsDir, statusWarn),
+		envList,
+		pathCheck("sops config", sopsConfigPath(dir), statusWarn),
+		pathCheck("schema", filepath.Join(dir, "deploy.schema.json"), statusWarn),
+	}
+}
+
+func pathCheck(name, path string, missingStatus checkStatus) checkResult {
+	if _, err := os.Stat(path); err == nil {
+		return checkResult{status: statusPass, name: name, detail: path}
+	}
+	return checkResult{status: missingStatus, name: name, detail: "not found at " + path}
 }
 
 // findManifest returns the path to deploy.yml if present, falling back
@@ -306,20 +389,21 @@ func discoverEnvs(dir string) []string {
 	return envs
 }
 
-// checkEnv runs the per-env subchecks in short-circuiting order:
-// vars file exists → secrets file exists → sops decrypts → manifest
-// renders → subscription reachable → KV reachable. First failure aborts
-// the remaining subchecks, which are rendered as "—". This mirrors how
-// a user would debug by hand: fix the earliest problem, then re-run.
-func checkEnv(ctx context.Context, dir, env string) envCheck {
+// checkEnvWithProgress runs the per-env subchecks in short-circuiting
+// order: vars file exists → secrets file exists → sops decrypts →
+// manifest renders → subscription reachable → KV reachable. First
+// failure aborts the remaining subchecks, which are rendered as "—".
+// This mirrors how a user would debug by hand: fix the earliest
+// problem, then re-run.
+func checkEnvWithProgress(ctx context.Context, dir, env string, progress *doctorProgress) envCheck {
 	ec := envCheck{env: env, status: statusPass}
 
 	marks := map[string]string{
-		"vars":             "—",
-		"secrets decrypt":  "—",
-		"manifest renders": "—",
-		"sub reachable":    "—",
-		"KV reachable":     "—",
+		"vars":             "skip",
+		"secrets decrypt":  "skip",
+		"manifest renders": "skip",
+		"sub reachable":    "skip",
+		"KV reachable":     "skip",
 	}
 	order := []string{"vars", "secrets decrypt", "manifest renders", "sub reachable", "KV reachable"}
 
@@ -327,68 +411,91 @@ func checkEnv(ctx context.Context, dir, env string) envCheck {
 		ec.status = statusFail
 		ec.failMsg = stage + ": " + msg
 		ec.overall = joinMarks(order, marks)
+		ec.stages = envStages(marks)
 		return ec
 	}
 
 	varsPath := filepath.Join(dir, "envs", env+".vars.yml")
+	progress.Set("checking " + env + " vars")
 	if _, err := os.Stat(varsPath); err != nil {
-		marks["vars"] = "✗"
+		marks["vars"] = "fail"
 		return fail("vars file", err.Error())
 	}
-	marks["vars"] = "✓"
+	marks["vars"] = "pass"
 
 	secretsPath := filepath.Join(dir, "envs", env+".secrets.yml")
+	progress.Set("checking " + env + " secrets")
 	if _, err := os.Stat(secretsPath); err != nil {
-		marks["secrets decrypt"] = "✗"
+		marks["secrets decrypt"] = "fail"
 		return fail("secrets file", err.Error())
 	}
 
+	progress.Set("decrypting " + env + " secrets")
 	if _, err := sopsio.Decrypt(secretsPath); err != nil {
-		marks["secrets decrypt"] = "✗"
+		marks["secrets decrypt"] = "fail"
 		return fail("sops decrypt", err.Error())
 	}
-	marks["secrets decrypt"] = "✓"
+	marks["secrets decrypt"] = "pass"
 
+	progress.Set("rendering " + env + " manifest")
 	manifest, _, err := lazurecfg.LoadManifest(lazurecfg.LoadOptions{ProjectDir: dir, Env: env})
 	if err != nil {
-		marks["manifest renders"] = "✗"
+		marks["manifest renders"] = "fail"
 		return fail("manifest render", err.Error())
 	}
-	marks["manifest renders"] = "✓"
+	marks["manifest renders"] = "pass"
 
 	// Subscription probe — catches tenant mismatches up front (a
 	// common footgun with multi-sub setups: az logged into dev but
 	// the user runs lazure deploy prd).
 	tp, err := azureapi.NewTokenProvider()
 	if err != nil {
-		marks["sub reachable"] = "✗"
+		marks["sub reachable"] = "fail"
 		return fail("azure auth", err.Error())
 	}
 	subID := manifest.App.Identity.SubscriptionID()
 	if subID == "" {
-		marks["sub reachable"] = "✗"
+		marks["sub reachable"] = "fail"
 		return fail("sub id", fmt.Sprintf("could not derive subscription id from app.identity %q", manifest.App.Identity))
 	}
+	progress.Set("checking " + env + " subscription")
 	if _, err := azureapi.LookupSubscription(ctx, tp, subID); err != nil {
-		marks["sub reachable"] = "✗"
+		marks["sub reachable"] = "fail"
 		return fail("sub probe", subProbeHint(err, subID))
 	}
-	marks["sub reachable"] = "✓"
+	marks["sub reachable"] = "pass"
 
+	progress.Set("checking " + env + " key vault")
 	vaultURL, err := sopsio.VaultURL(secretsPath)
 	if err != nil {
-		marks["KV reachable"] = "✗"
+		marks["KV reachable"] = "fail"
 		return fail("sops vault url", err.Error())
 	}
 	kv := azureapi.NewKeyVaultClient(vaultURL, tp)
 	if _, err := kv.ListSecrets(ctx); err != nil {
-		marks["KV reachable"] = "✗"
+		marks["KV reachable"] = "fail"
 		return fail("kv list", err.Error())
 	}
-	marks["KV reachable"] = "✓"
+	marks["KV reachable"] = "pass"
 
 	ec.overall = joinMarks(order, marks)
+	ec.stages = envStages(marks)
 	return ec
+}
+
+func envStages(marks map[string]string) map[string]checkStatus {
+	out := make(map[string]checkStatus, len(marks))
+	for k, v := range marks {
+		switch v {
+		case "pass":
+			out[k] = statusPass
+		case "fail":
+			out[k] = statusFail
+		default:
+			out[k] = statusSkip
+		}
+	}
+	return out
 }
 
 // subProbeHint returns a tighter, more actionable message for the
@@ -438,34 +545,27 @@ func anyFailed(sections []section) bool {
 func renderDoctorText(sections []section, color bool) string {
 	var b strings.Builder
 	b.WriteString("\nlazure doctor\n")
+
 	for _, sec := range sections {
 		b.WriteString("\n")
-		b.WriteString(sec.name)
+		b.WriteString(sectionTitle(sec.name))
 		b.WriteString("\n")
-		for _, r := range sec.results {
-			b.WriteString("  ")
-			b.WriteString(formatCheckLine(r, color))
-			b.WriteString("\n")
-		}
+		renderCheckList(&b, sec.results, color)
 		if len(sec.envChecks) > 0 {
-			b.WriteString("  environments:\n")
-			for _, ec := range sec.envChecks {
-				b.WriteString("    ")
-				mark := markFor(ec.status, color)
-				fmt.Fprintf(&b, "%s %s    %s\n", mark, padRight(ec.env, 8), ec.overall)
-				if ec.status == statusFail && ec.failMsg != "" {
-					for i, line := range strings.Split(strings.TrimSpace(ec.failMsg), "\n") {
-						prefix := "        └─ "
-						if i > 0 {
-							prefix = "           "
-						}
-						b.WriteString(colorize(prefix+line, styleFail, color))
-						b.WriteString("\n")
-					}
-				}
-			}
+			b.WriteString("\n")
+			b.WriteString("Environments\n")
+			renderEnvBlocks(&b, sec.envChecks, color)
 		}
 	}
+
+	findings := doctorFindings(sections)
+	if len(findings) > 0 {
+		b.WriteString("\nFindings\n")
+		for _, f := range findings {
+			fmt.Fprintf(&b, "  %s\n", f)
+		}
+	}
+
 	b.WriteString("\n")
 	if anyFailed(sections) {
 		b.WriteString(colorize("one or more checks failed", styleFail, color))
@@ -476,34 +576,79 @@ func renderDoctorText(sections []section, color bool) string {
 	return b.String()
 }
 
-func formatCheckLine(r checkResult, color bool) string {
-	mark := markFor(r.status, color)
-	name := padRight(r.name, 16)
-	detail := r.detail
-	if r.status == statusFail && strings.Contains(detail, "\n") {
-		// Indent continuation lines so multi-line error text stays under
-		// the detail column rather than disrupting the next check.
-		lines := strings.Split(detail, "\n")
-		for i := 1; i < len(lines); i++ {
-			lines[i] = strings.Repeat(" ", 2+1+16) + lines[i]
-		}
-		detail = strings.Join(lines, "\n")
+func sectionTitle(name string) string {
+	switch name {
+	case "global checks":
+		return "Global Checks"
+	case "project checks":
+		return "Project Checks"
+	default:
+		return name
 	}
-	return fmt.Sprintf("%s %s %s", mark, name, colorize(detail, styleForStatus(r.status), color))
 }
 
-func markFor(s checkStatus, color bool) string {
+func renderCheckList(b *strings.Builder, results []checkResult, color bool) {
+	for _, r := range results {
+		fmt.Fprintf(b, "  %-4s  %-12s  %s\n",
+			statusWord(r.status, color),
+			r.name,
+			colorize(r.detail, styleForStatus(r.status), color))
+	}
+}
+
+func renderEnvBlocks(b *strings.Builder, checks []envCheck, color bool) {
+	for _, ec := range checks {
+		fmt.Fprintf(b, "  %s\n", ec.env)
+		fmt.Fprintf(b, "    %-12s  %s\n", "vars", stageWord(ec, "vars", color))
+		fmt.Fprintf(b, "    %-12s  %s\n", "secrets", stageWord(ec, "secrets decrypt", color))
+		fmt.Fprintf(b, "    %-12s  %s\n", "manifest", stageWord(ec, "manifest renders", color))
+		fmt.Fprintf(b, "    %-12s  %s\n", "subscription", stageWord(ec, "sub reachable", color))
+		fmt.Fprintf(b, "    %-12s  %s\n", "key vault", stageWord(ec, "KV reachable", color))
+	}
+}
+
+func stageWord(ec envCheck, stage string, color bool) string {
+	if ec.stages == nil {
+		return statusWord(statusSkip, color)
+	}
+	return statusWord(ec.stages[stage], color)
+}
+
+func doctorFindings(sections []section) []string {
+	var out []string
+	for _, sec := range sections {
+		name := sectionTitle(sec.name)
+		for _, r := range sec.results {
+			if r.status != statusPass {
+				out = append(out, fmt.Sprintf("%s / %s: %s", name, r.name, r.detail))
+			}
+		}
+		for _, ec := range sec.envChecks {
+			if ec.status != statusPass && ec.failMsg != "" {
+				out = append(out, fmt.Sprintf("env %s: %s", ec.env, compactFinding(ec.failMsg)))
+			}
+		}
+	}
+	return out
+}
+
+func compactFinding(s string) string {
+	lines := strings.Fields(strings.TrimSpace(s))
+	return strings.Join(lines, " ")
+}
+
+func statusWord(s checkStatus, color bool) string {
 	switch s {
 	case statusPass:
-		return colorize("[✓]", stylePass, color)
+		return colorize("OK", stylePass, color)
 	case statusWarn:
-		return colorize("[!]", styleWarn, color)
+		return colorize("WARN", styleWarn, color)
 	case statusFail:
-		return colorize("[✗]", styleFail, color)
+		return colorize("FAIL", styleFail, color)
 	case statusSkip:
-		return colorize("[-]", styleSkip, color)
+		return colorize("SKIP", styleSkip, color)
 	default:
-		return "[?]"
+		return "?"
 	}
 }
 

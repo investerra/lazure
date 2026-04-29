@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -82,9 +83,9 @@ func TestACRNameFromServer(t *testing.T) {
 		{"foo.azurecr.io", "foo", true},
 		{"  foo.azurecr.io  ", "foo", true},
 		{"", "", false},
-		{"foo", "", false},               // no dot
-		{"foo.example.com", "", false},   // not azurecr
-		{".azurecr.io", "", false},       // empty name
+		{"foo", "", false},             // no dot
+		{"foo.example.com", "", false}, // not azurecr
+		{".azurecr.io", "", false},     // empty name
 	}
 	for _, tc := range cases {
 		gotName, gotOK := acrNameFromServer(tc.in)
@@ -92,5 +93,66 @@ func TestACRNameFromServer(t *testing.T) {
 			t.Errorf("acrNameFromServer(%q) = (%q, %v), want (%q, %v)",
 				tc.in, gotName, gotOK, tc.wantName, tc.wantOK)
 		}
+	}
+}
+
+func TestRunImageBuild_PullBuildPushSequence(t *testing.T) {
+	var commands []string
+	runner := func(_ context.Context, name string, args ...string) error {
+		commands = append(commands, name+" "+strings.Join(args, " "))
+		return nil
+	}
+	lookup := func(string) error { return nil }
+
+	err := runImageBuild(context.Background(), imageBuildOptions{
+		Env:        "dev",
+		ProjectDir: "deploy",
+		Vars: map[string]any{
+			"docker_image": "acr.azurecr.io/app:abc",
+			"acr_server":   "acr.azurecr.io",
+			"git_commit":   "abc",
+		},
+		Push:   true,
+		Pull:   true,
+		Runner: runner,
+		Lookup: lookup,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(commands) != 3 {
+		t.Fatalf("commands = %#v, want docker build, az acr login, docker push", commands)
+	}
+	if !strings.HasPrefix(commands[0], "docker build --pull ") {
+		t.Errorf("build command = %q, want docker build --pull ...", commands[0])
+	}
+	if !strings.Contains(commands[0], "-t acr.azurecr.io/app:abc") {
+		t.Errorf("build command missing image tag: %q", commands[0])
+	}
+	if commands[1] != "az acr login --name acr" {
+		t.Errorf("login command = %q", commands[1])
+	}
+	if commands[2] != "docker push acr.azurecr.io/app:abc" {
+		t.Errorf("push command = %q", commands[2])
+	}
+}
+
+func TestRunImageBuild_RequiresACRServerForPush(t *testing.T) {
+	err := runImageBuild(context.Background(), imageBuildOptions{
+		Env:        "dev",
+		ProjectDir: "deploy",
+		Vars: map[string]any{
+			"docker_image": "acr.azurecr.io/app:abc",
+		},
+		Push:   true,
+		Runner: func(context.Context, string, ...string) error { return nil },
+		Lookup: func(string) error { return nil },
+	})
+	if err == nil {
+		t.Fatal("expected missing acr_server error")
+	}
+	if !strings.Contains(err.Error(), "acr_server var is required") {
+		t.Fatalf("error = %v", err)
 	}
 }

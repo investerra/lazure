@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/urfave/cli/v3"
+
 	"github.com/investerra/lazure/internal/azurearm"
 	"github.com/investerra/lazure/internal/lazurecfg"
 )
@@ -86,6 +88,15 @@ func TestParseCLIVars_EmptyValueAllowed(t *testing.T) {
 	if v, ok := got["k"]; !ok || v != "" {
 		t.Errorf("expected {k: \"\"}, got %+v", got)
 	}
+}
+
+func TestDeployFlags_IncludesBuild(t *testing.T) {
+	for _, f := range DeployFlags() {
+		if bf, ok := f.(*cli.BoolFlag); ok && bf.Name == "build" {
+			return
+		}
+	}
+	t.Fatal("DeployFlags() missing --build")
 }
 
 // ---------- findAppImage ----------

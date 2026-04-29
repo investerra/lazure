@@ -29,6 +29,13 @@ func TestRoundTrip_MinimalApp(t *testing.T) {
 					External:   true,
 					TargetPort: 8000,
 					Transport:  "auto", // lowercase per ARM spec
+					CustomDomains: []CustomDomain{
+						{
+							Name:          "api.example.com",
+							BindingType:   "SniEnabled",
+							CertificateID: "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/managedEnvironments/env/certificates/api-example-com",
+						},
+					},
 				},
 			},
 			Template: Template{
@@ -60,6 +67,9 @@ func TestRoundTrip_MinimalApp(t *testing.T) {
 	mustContain(t, got, "activeRevisionsMode: Single")
 	mustContain(t, got, "transport: auto")
 	mustContain(t, got, "targetPort: 8000")
+	mustContain(t, got, "customDomains:")
+	mustContain(t, got, "bindingType: SniEnabled")
+	mustContain(t, got, "certificateId:")
 	mustContain(t, got, "userAssignedIdentities:")
 	mustContain(t, got, "secretRef: nexus-database-url")
 
@@ -73,6 +83,9 @@ func TestRoundTrip_MinimalApp(t *testing.T) {
 	}
 	if round.Properties.Configuration.Ingress.TargetPort != 8000 {
 		t.Errorf("target port lost: %d", round.Properties.Configuration.Ingress.TargetPort)
+	}
+	if got := round.Properties.Configuration.Ingress.CustomDomains; len(got) != 1 || got[0].Name != "api.example.com" {
+		t.Errorf("custom domains lost in round-trip: %+v", got)
 	}
 	if len(round.Properties.Template.Containers) != 1 {
 		t.Fatalf("containers lost: %d", len(round.Properties.Template.Containers))
@@ -130,8 +143,8 @@ func TestRoundTrip_Scale(t *testing.T) {
 					MaxReplicas: 10,
 					Rules: []ScaleRule{
 						{
-							Name:     "http-r",
-							HTTP:     &HTTPScaleRule{Metadata: map[string]string{"concurrentRequests": "10"}},
+							Name: "http-r",
+							HTTP: &HTTPScaleRule{Metadata: map[string]string{"concurrentRequests": "10"}},
 						},
 						{
 							Name: "queue-r",

@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"log/slog"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -43,52 +42,95 @@ func Build(ctx context.Context, c *cli.Command) error {
 	pull := c.Bool("pull")
 	slog.Debug("build: start", "env", env, "dir", dir, "push", push, "pull", pull)
 
-	if _, err := exec.LookPath("docker"); err != nil {
-		return errs.System(errs.New("build: 'docker' not found on PATH"))
-	}
-	if push {
-		if _, err := exec.LookPath("az"); err != nil {
-			return errs.System(errs.New("build: 'az' not found on PATH (required for --push to ACR)"))
-		}
-	}
-
 	vars, err := lazurecfg.LoadVars(lazurecfg.LoadOptions{ProjectDir: dir, Env: env})
 	if err != nil {
 		return errs.Usage(errs.Wrap(err, "build: load vars"))
 	}
-	image, _ := vars["docker_image"].(string)
+	return runImageBuild(ctx, imageBuildOptions{
+		Env:        env,
+		ProjectDir: dir,
+		Vars:       vars,
+		Push:       push,
+		Pull:       pull,
+		Dockerfile: c.String("file"),
+		ContextDir: c.String("context"),
+		BuildArgs:  c.StringSlice("build-arg"),
+		Secrets:    c.StringSlice("secret"),
+	})
+}
+
+type commandRunner func(context.Context, string, ...string) error
+type pathLookup func(string) error
+
+type imageBuildOptions struct {
+	Env        string
+	ProjectDir string
+	Vars       map[string]any
+	Push       bool
+	Pull       bool
+	Dockerfile string
+	ContextDir string
+	BuildArgs  []string
+	Secrets    []string
+	Runner     commandRunner
+	Lookup     pathLookup
+}
+
+func runImageBuild(ctx context.Context, opts imageBuildOptions) error {
+	runner := opts.Runner
+	if runner == nil {
+		runner = runStreamed
+	}
+	lookup := opts.Lookup
+	if lookup == nil {
+		lookup = func(name string) error {
+			_, err := exec.LookPath(name)
+			return err
+		}
+	}
+
+	if err := lookup("docker"); err != nil {
+		return errs.System(errs.New("build: 'docker' not found on PATH"))
+	}
+	if opts.Push {
+		if err := lookup("az"); err != nil {
+			return errs.System(errs.New("build: 'az' not found on PATH (required for --push to ACR)"))
+		}
+	}
+
+	image, _ := opts.Vars["docker_image"].(string)
 	if image == "" {
-		return errs.Usage(errs.Errorf("build: docker_image var is required (set it in envs/%s.vars.yml)", env))
+		return errs.Usage(errs.Errorf("build: docker_image var is required (set it in envs/%s.vars.yml)", opts.Env))
 	}
 
-	contextDir := c.String("context")
+	contextDir := opts.ContextDir
 	if contextDir == "" {
-		contextDir = filepath.Dir(filepath.Clean(dir))
+		contextDir = filepath.Dir(filepath.Clean(opts.ProjectDir))
 	}
 
-	args := buildDockerArgs(image, contextDir, pull, c.String("file"),
-		autoBuildArgs(vars), c.StringSlice("build-arg"), c.StringSlice("secret"))
+	args := buildDockerArgs(image, contextDir, opts.Pull, opts.Dockerfile,
+		autoBuildArgs(opts.Vars), opts.BuildArgs, opts.Secrets)
 
 	slog.Info("docker build", "image", image, "context", contextDir)
-	if err := runStreamed(ctx, "docker", args...); err != nil {
+	if err := runner(ctx, "docker", args...); err != nil {
 		return errs.System(errs.Wrap(err, "build: docker build"))
 	}
 
-	if push {
-		acrServer, _ := vars["acr_server"].(string)
+	if opts.Push {
+		acrServer, _ := opts.Vars["acr_server"].(string)
 		if acrServer == "" {
-			return errs.Usage(errs.Errorf("build: acr_server var is required for --push (set it in envs/%s.vars.yml)", env))
+			return errs.Usage(errs.Errorf("build: acr_server var is required for --push (set it in envs/%s.vars.yml)", opts.Env))
 		}
 		acrName, ok := acrNameFromServer(acrServer)
 		if !ok {
 			return errs.Usage(errs.Errorf("build: acr_server %q is not a valid ACR login server (want <name>.azurecr.io)", acrServer))
 		}
 		slog.Info("az acr login", "registry", acrName)
-		if err := runStreamed(ctx, "az", "acr", "login", "--name", acrName); err != nil {
+		if err := runner(ctx, "az", "acr", "login", "--name", acrName); err != nil {
 			return errs.System(errs.Wrap(err, "build: az acr login"))
 		}
 		slog.Info("docker push", "image", image)
-		if err := runStreamed(ctx, "docker", "push", image); err != nil {
+		if err := runner(ctx, "docker", "push", image); err != nil {
 			return errs.System(errs.Wrap(err, "build: docker push"))
 		}
 	}
@@ -151,12 +193,4 @@ func acrNameFromServer(server string) (string, bool) {
 		return "", false
 	}
 	return name, true
-}
-
-// runStreamed runs an external command with stdio wired to lazure's
-// stdio so the user sees docker / az progress in real time.
-func runStreamed(ctx context.Context, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	return cmd.Run()
 }

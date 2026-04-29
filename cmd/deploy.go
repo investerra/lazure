@@ -27,7 +27,9 @@ func DeployFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.BoolFlag{Name: "print", Usage: "dump generated ARM YAML to stdout before confirming"},
 		&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "skip the confirmation prompt"},
+		&cli.BoolFlag{Name: "build", Usage: "pull base images, build the Docker image, and push it before deploy"},
 		&cli.BoolFlag{Name: "force", Usage: "force a new revision by injecting a timestamp env var"},
+		&cli.StringSliceFlag{Name: "env", Usage: "temporary plain env var for this deploy only: KEY=VALUE (repeatable)"},
 		&cli.StringSliceFlag{Name: "var", Usage: "override a vars entry (repeatable): key=value"},
 		&cli.BoolFlag{Name: "wait", Usage: "after ARM succeeds, wait until the new revision's replicas are Ready"},
 		&cli.DurationFlag{Name: "wait-timeout", Value: 5 * time.Minute, Usage: "max wait time (default: 5m)"},
@@ -50,7 +52,12 @@ func DeployFlags() []cli.Flag {
 func Deploy(ctx context.Context, c *cli.Command) error {
 	print := c.Bool("print")
 	yes := c.Bool("yes")
+	build := c.Bool("build")
 	force := c.Bool("force")
+	envOverrides, err := parseDeployEnvOverrides(c.StringSlice("env"))
+	if err != nil {
+		return err
+	}
 	// --wait defaults to TRUE on interactive terminals (humans want to
 	// see the deploy land), FALSE when piped (CI / scripts assume
 	// fire-and-return semantics from years of `kubectl apply`-style
@@ -70,7 +77,7 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 	}
 	slog.Debug("deploy: start",
 		"env", t.Env, "dir", t.Dir, "print", print, "yes", yes,
-		"force", force, "subscription", t.Sub, "resource_group", t.RG, "app", t.Name)
+		"build", build, "force", force, "subscription", t.Sub, "resource_group", t.RG, "app", t.Name)
 
 	// Validate before any side effects.
 	if r := lazurecfg.Validate(t.Manifest); r.HasErrors() {
@@ -91,20 +98,38 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 		return errs.Validation(errs.Wrap(r.Err(), "deploy"))
 	}
 
+	if build {
+		slog.Info("deploy: build + push image", "env", t.Env)
+		if err := runImageBuild(ctx, imageBuildOptions{
+			Env:        t.Env,
+			ProjectDir: t.Dir,
+			Vars:       t.Vars,
+			Push:       true,
+			Pull:       true,
+		}); err != nil {
+			return errs.System(errs.Wrap(err, "deploy: --build"))
+		}
+	}
+
 	// Resolve previous revision. Missing app = first deploy.
 	var (
 		previousRev          string
 		previousImage        string
 		previousProvisioning string
+		current              *azurearm.ContainerApp
 	)
 	slog.Debug("deploy: fetching current state (for traffic.previous resolution)")
-	current, err := t.CA.Get(ctx, t.Sub, t.RG, t.Name)
+	currentState, err := t.CA.GetState(ctx, t.Sub, t.RG, t.Name)
 	switch {
 	case errors.Is(err, azureapi.ErrContainerAppNotFound):
 		slog.Info("first deploy detected; no previous revision to split traffic with", "app", t.Name)
 	case err != nil:
 		return errs.System(errs.Wrap(err, "deploy: fetch current app state"))
 	default:
+		current = currentState.App
+		if fields := azureapi.UnsupportedLiveStateFields(currentState.Raw); len(fields) > 0 {
+			return errs.Validation(unsupportedLiveStateError("deploy", fields))
+		}
 		previousRev = current.Properties.LatestRevisionName
 		previousImage = firstContainerImage(current)
 		previousProvisioning = current.Properties.ProvisioningState
@@ -127,10 +152,14 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		return errs.System(errs.Wrap(err, "deploy: transform"))
 	}
+	if len(envOverrides) > 0 {
+		applyRuntimeEnvOverrides(armApp, envOverrides)
+		slog.Info("temporary deploy env vars applied", "count", len(envOverrides))
+	}
 	if force {
 		ts := time.Now().UTC().Format(time.RFC3339Nano)
 		applyForceRedeployTimestamp(armApp, ts)
-		slog.Info("force redeploy enabled", "env", forceRedeployEnvName, "value", ts)
+		slog.Info("force redeploy enabled", "env_var", forceRedeployEnvName, "value", ts)
 	}
 
 	if print {
@@ -151,6 +180,9 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 			return errs.Usage(errs.New("deploy: aborted by user"))
 		}
 	}
+	if err := checkDeployImages(ctx, armApp, nil); err != nil {
+		return err
+	}
 
 	// PUT + poll. Indefinite spinner during the ARM async-op poll —
 	// without it the user sees "deploying" then ~30-60s of silence.
@@ -159,7 +191,7 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 	sp := newWaitSpinner(time.Time{})
 	sp.SetMessage("ARM operation in progress")
 	sp.Start()
-	final, err := t.CA.PutAndWait(ctx, t.Sub, t.RG, t.Name, armApp)
+	final, err := t.CA.PutAndWaitPreservingExternalState(ctx, t.Sub, t.RG, t.Name, armApp, current)
 	sp.Stop()
 	if err != nil {
 		return errs.System(errs.Wrap(err, "deploy"))
@@ -368,6 +400,10 @@ func upsertPlainEnv(env []azurearm.EnvVar, name, value string) []azurearm.EnvVar
 // on the FIRST '=' so values may contain '=' characters (e.g. base64 blobs,
 // connection strings).
 func parseCLIVars(raw []string) (map[string]string, error) {
+	return parseKeyValueFlags(raw, "--var")
+}
+
+func parseKeyValueFlags(raw []string, flagName string) (map[string]string, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
@@ -375,11 +411,11 @@ func parseCLIVars(raw []string) (map[string]string, error) {
 	for _, pair := range raw {
 		idx := strings.Index(pair, "=")
 		if idx < 0 {
-			return nil, errs.Usage(errs.Errorf("invalid --var %q (want key=value)", pair))
+			return nil, errs.Usage(errs.Errorf("invalid %s %q (want key=value)", flagName, pair))
 		}
 		key := pair[:idx]
 		if key == "" {
-			return nil, errs.Usage(errs.Errorf("invalid --var %q (empty key)", pair))
+			return nil, errs.Usage(errs.Errorf("invalid %s %q (empty key)", flagName, pair))
 		}
 		out[key] = pair[idx+1:]
 	}

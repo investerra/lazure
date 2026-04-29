@@ -13,8 +13,11 @@ func TestNormalize_NilSafe(t *testing.T) {
 func TestNormalize_ZeroesReadOnlyFields(t *testing.T) {
 	app := &azurearm.ContainerApp{
 		Properties: azurearm.ContainerAppProperties{
-			LatestRevisionName: "api-server--abc123",
-			ProvisioningState:  "Succeeded",
+			LatestRevisionName:      "api-server--abc123",
+			LatestReadyRevisionName: "api-server--ready",
+			LatestRevisionFqdn:      "api-server--ready.example.com",
+			ProvisioningState:       "Succeeded",
+			RunningStatus:           "Running",
 		},
 	}
 	Normalize(app)
@@ -23,6 +26,15 @@ func TestNormalize_ZeroesReadOnlyFields(t *testing.T) {
 	}
 	if app.Properties.ProvisioningState != "" {
 		t.Errorf("ProvisioningState not zeroed: %q", app.Properties.ProvisioningState)
+	}
+	if app.Properties.LatestReadyRevisionName != "" {
+		t.Errorf("LatestReadyRevisionName not zeroed: %q", app.Properties.LatestReadyRevisionName)
+	}
+	if app.Properties.LatestRevisionFqdn != "" {
+		t.Errorf("LatestRevisionFqdn not zeroed: %q", app.Properties.LatestRevisionFqdn)
+	}
+	if app.Properties.RunningStatus != "" {
+		t.Errorf("RunningStatus not zeroed: %q", app.Properties.RunningStatus)
 	}
 }
 
@@ -154,6 +166,137 @@ func TestNormalize_SortsIPRestrictions(t *testing.T) {
 	ips := app.Properties.Configuration.Ingress.IPSecurityRestrictions
 	if ips[0].Name != "aa-rule" {
 		t.Errorf("IP restrictions not sorted: %+v", ips)
+	}
+}
+
+func TestNormalize_DropsCustomDomains(t *testing.T) {
+	app := &azurearm.ContainerApp{
+		Properties: azurearm.ContainerAppProperties{
+			Configuration: azurearm.Configuration{
+				Ingress: &azurearm.Ingress{
+					CustomDomains: []azurearm.CustomDomain{
+						{Name: "api.example.com", BindingType: "SniEnabled", CertificateID: "/certs/api-example-com"},
+					},
+				},
+			},
+		},
+	}
+
+	Normalize(app)
+
+	if got := app.Properties.Configuration.Ingress.CustomDomains; len(got) != 0 {
+		t.Errorf("custom domains should be ignored by diff: %+v", got)
+	}
+}
+
+func TestNormalize_DropsAzureIngressDefaults(t *testing.T) {
+	app := &azurearm.ContainerApp{
+		Properties: azurearm.ContainerAppProperties{
+			Configuration: azurearm.Configuration{
+				Ingress: &azurearm.Ingress{
+					Transport: "Auto",
+					Traffic: []azurearm.TrafficEntry{{
+						LatestRevision: true,
+						Weight:         100,
+					}},
+				},
+			},
+		},
+	}
+
+	Normalize(app)
+
+	if got := app.Properties.Configuration.Ingress.Transport; got != "" {
+		t.Errorf("default transport should be ignored by diff, got %q", got)
+	}
+	if got := app.Properties.Configuration.Ingress.Traffic; len(got) != 0 {
+		t.Errorf("default traffic should be ignored by diff, got %+v", got)
+	}
+}
+
+func TestNormalize_CanonicalizesAzureReadbackNoise(t *testing.T) {
+	app := &azurearm.ContainerApp{
+		Location: "Switzerland North",
+		Identity: &azurearm.Identity{
+			Type: "UserAssigned",
+			UserAssignedIdentities: map[string]azurearm.UserAssignedDetail{
+				"/subscriptions/SUB/resourcegroups/RG/providers/Microsoft.ManagedIdentity/userAssignedIdentities/App": {
+					ClientID: "client",
+				},
+			},
+		},
+		Properties: azurearm.ContainerAppProperties{
+			Configuration: azurearm.Configuration{
+				Registries: []azurearm.Registry{{
+					Server:   "acr.azurecr.io",
+					Identity: "/subscriptions/SUB/resourcegroups/RG/providers/Microsoft.ManagedIdentity/userAssignedIdentities/App",
+				}},
+				Secrets: []azurearm.Secret{{
+					Name:     "secret",
+					Identity: "/subscriptions/SUB/resourcegroups/RG/providers/Microsoft.ManagedIdentity/userAssignedIdentities/App",
+				}},
+			},
+			Template: azurearm.Template{Containers: []azurearm.Container{{
+				Name: "app",
+				Env: []azurearm.EnvVar{{
+					Name:  "LAZURE_FORCE_REDEPLOYED_AT",
+					Value: "2026-04-29T10:20:55Z",
+				}, {
+					Name:  "APP_ENV",
+					Value: "dev",
+				}},
+			}}},
+		},
+	}
+
+	Normalize(app)
+
+	if app.Location != "switzerlandnorth" {
+		t.Errorf("location = %q", app.Location)
+	}
+	for id, detail := range app.Identity.UserAssignedIdentities {
+		if id != "/subscriptions/sub/resourcegroups/rg/providers/microsoft.managedidentity/userassignedidentities/app" {
+			t.Errorf("identity key = %q", id)
+		}
+		if detail.ClientID != "" || detail.PrincipalID != "" {
+			t.Errorf("identity detail not stripped: %+v", detail)
+		}
+	}
+	if got := app.Properties.Configuration.Registries[0].Identity; got != "/subscriptions/sub/resourcegroups/rg/providers/microsoft.managedidentity/userassignedidentities/app" {
+		t.Errorf("registry identity = %q", got)
+	}
+	if got := app.Properties.Configuration.Secrets[0].Identity; got != "/subscriptions/sub/resourcegroups/rg/providers/microsoft.managedidentity/userassignedidentities/app" {
+		t.Errorf("secret identity = %q", got)
+	}
+	env := app.Properties.Template.Containers[0].Env
+	if len(env) != 1 || env[0].Name != "APP_ENV" {
+		t.Errorf("force env not dropped: %+v", env)
+	}
+}
+
+func TestNormalize_PreservesNonDefaultIngressTransportAndTraffic(t *testing.T) {
+	app := &azurearm.ContainerApp{
+		Properties: azurearm.ContainerAppProperties{
+			Configuration: azurearm.Configuration{
+				Ingress: &azurearm.Ingress{
+					Transport: "Http2",
+					Traffic: []azurearm.TrafficEntry{{
+						LatestRevision: true,
+						Weight:         100,
+						Label:          "stable",
+					}},
+				},
+			},
+		},
+	}
+
+	Normalize(app)
+
+	if got := app.Properties.Configuration.Ingress.Transport; got != "http2" {
+		t.Errorf("non-default transport should be canonicalized and preserved, got %q", got)
+	}
+	if got := app.Properties.Configuration.Ingress.Traffic; len(got) != 1 || got[0].Label != "stable" {
+		t.Errorf("labeled traffic should be preserved, got %+v", got)
 	}
 }
 

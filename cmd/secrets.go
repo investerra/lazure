@@ -307,7 +307,7 @@ func marshalPlainSecrets(secrets map[string]string) ([]byte, error) {
 	var buf strings.Builder
 	buf.WriteString("# Decrypted secrets — DO NOT COMMIT. Delete this file when done editing.\n")
 	buf.WriteString("# Names must match ^[0-9a-zA-Z-]+$ (alphanumeric + hyphens, no underscores)\n")
-	buf.WriteString(fmt.Sprintf("# and be at most %d characters — Azure Key Vault rejects anything else.\n", azureapi.SecretNameMaxLen))
+	fmt.Fprintf(&buf, "# and be at most %d characters — Azure Key Vault rejects anything else.\n", azureapi.SecretNameMaxLen)
 	for _, k := range keys {
 		v, err := json.Marshal(secrets[k])
 		if err != nil {
@@ -458,7 +458,7 @@ func createEmptyEncryptedSecrets(encPath, configPath string) error {
 		return errs.Wrap(err, "tmp")
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 	if _, err := tmp.WriteString("{}\n"); err != nil {
 		_ = tmp.Close()
 		return errs.Wrap(err, "write tmp")

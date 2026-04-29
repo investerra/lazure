@@ -2,6 +2,7 @@ package azureapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -60,6 +61,30 @@ func TestContainerApps_Get_Success(t *testing.T) {
 	}
 	if app.Location != "switzerlandnorth" {
 		t.Errorf("location = %q", app.Location)
+	}
+}
+
+func TestContainerApps_GetState_ReturnsTypedAndRawState(t *testing.T) {
+	c, _ := newMockARMClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"type": "Microsoft.App/containerApps",
+			"location": "switzerlandnorth",
+			"name": "api-server",
+			"tags": {"owner": "platform"},
+			"properties": {"managedEnvironmentId": "/x"}
+		}`))
+	}))
+
+	state, err := c.GetState(context.Background(), "sub-1", "rg-1", "api-server")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.App.Name != "api-server" {
+		t.Errorf("typed name = %q", state.App.Name)
+	}
+	tags, ok := state.Raw["tags"].(map[string]any)
+	if !ok || tags["owner"] != "platform" {
+		t.Fatalf("raw tags not retained: %#v", state.Raw["tags"])
 	}
 }
 
@@ -133,6 +158,57 @@ func TestContainerApps_Put_Synchronous(t *testing.T) {
 	}
 	if got.Properties.LatestRevisionName != "api-server--abc" {
 		t.Errorf("latestRevisionName = %q, want the value from the post-PUT GET", got.Properties.LatestRevisionName)
+	}
+}
+
+func TestContainerApps_Put_PreservesLiveCustomDomains(t *testing.T) {
+	var putBody azurearm.ContainerApp
+	c, _ := newMockARMClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			if err := json.NewDecoder(r.Body).Decode(&putBody); err != nil {
+				t.Fatalf("decode PUT body: %v", err)
+			}
+			_, _ = w.Write([]byte(`{
+				"type": "Microsoft.App/containerApps",
+				"name": "api-server",
+				"location": "switzerlandnorth",
+				"properties": {"managedEnvironmentId": "/x", "latestRevisionName": "api-server--abc"}
+			}`))
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{
+				"type": "Microsoft.App/containerApps",
+				"name": "api-server",
+				"location": "switzerlandnorth",
+				"properties": {"managedEnvironmentId": "/x", "latestRevisionName": "api-server--abc"}
+			}`))
+		default:
+			t.Errorf("unexpected method = %s", r.Method)
+		}
+	}))
+
+	body := &azurearm.ContainerApp{
+		Type: "Microsoft.App/containerApps", Location: "switzerlandnorth", Name: "api-server",
+		Properties: azurearm.ContainerAppProperties{
+			Configuration: azurearm.Configuration{Ingress: &azurearm.Ingress{External: true, TargetPort: 8080}},
+		},
+	}
+	live := &azurearm.ContainerApp{
+		Properties: azurearm.ContainerAppProperties{
+			Configuration: azurearm.Configuration{Ingress: &azurearm.Ingress{CustomDomains: []azurearm.CustomDomain{
+				{Name: "api.example.com", BindingType: "SniEnabled", CertificateID: "/certs/api-example-com"},
+			}}},
+		},
+	}
+
+	_, err := c.PutAndWaitPreservingExternalState(context.Background(), "sub", "rg", "api-server", body, live)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := putBody.Properties.Configuration.Ingress.CustomDomains
+	if len(got) != 1 || got[0].Name != "api.example.com" {
+		t.Fatalf("PUT body did not preserve custom domains: %+v", got)
 	}
 }
 

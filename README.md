@@ -47,19 +47,21 @@ lazure doctor                       # preflight: git/editor/az/gh/auth + per-env
 lazure validate dev                 # static checks (no Azure calls)
 lazure render dev                   # preview the ARM payload
 lazure deploy dev                   # deploy (auto-waits + tails logs on TTY)
+lazure deploy dev --build           # build, push, then deploy
 ```
 
 ## Commands
 
 ### Pipeline
-`deploy` · `render` · `diff` · `validate` · `release` · `self-update`
+`deploy` · `build` · `render` · `diff` · `validate` · `release` ·
+`self-update`
 
 ### Operations
 `status` · `logs` · `revisions` · `rollback` · `restart` · `scale` ·
 `ports` · `events` · `exec`
 
 ### Diagnostics
-`doctor` · `env list` · `env diff`
+`doctor` · `config` · `env list` · `env diff`
 
 ### Configuration
 `init` · `schema` · `secrets {view,edit,verify,sync}` ·

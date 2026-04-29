@@ -76,7 +76,6 @@ var commandCategory = map[string]string{
 	"deploy":      "Deploy pipeline",
 	"render":      "Deploy pipeline",
 	"diff":        "Deploy pipeline",
-	"rollout":     "Deploy pipeline",
 	"build":       "Deploy pipeline",
 	"release":     "Deploy pipeline",
 	"self-update": "Deploy pipeline",
@@ -100,7 +99,8 @@ var commandCategory = map[string]string{
 	"secrets": "Config surface",
 	"vars":    "Config surface",
 
-	"llm": "Documentation",
+	"config": "Documentation",
+	"llm":    "Documentation",
 }
 
 var categoryOrder = []string{
@@ -138,14 +138,15 @@ var (
 var commandMetadata = map[string]commandMeta{
 	// ---------- Deploy pipeline ----------
 	"lazure deploy": {
-		useCase: "you have a built+pushed image and want to roll it out to a target environment; use `--force` to create a fresh revision even when the template would otherwise be unchanged.",
+		useCase: "roll out an image to a target environment. By default the image must already exist in ACR; use `--build` to build and push first, `--env KEY=VALUE` for one-off runtime env vars, and `--force` to create a fresh revision even when the template would otherwise be unchanged.",
 		prerequisites: []string{
 			prereqAzureAuth,
 			prereqManifest,
-			"Image referenced by the env's `docker_image` var must already be pushed to the registry (use `lazure rollout` or `lazure build --push` if not).",
+			"ACR image tags referenced by the rendered Container App must exist. Lazure checks this before ARM PUT.",
+			"With `--build`: running docker daemon and `az` CLI available for ACR login/push.",
 			"Every `{secret: X}` reference in the manifest must already exist in Azure Key Vault (run `lazure secrets sync <env>` first).",
 		},
-		dependencies: []string{depAzureARM},
+		dependencies: []string{depAzureARM, "`az` CLI for ACR image-tag preflight.", "With `--build`: " + depDocker},
 	},
 	"lazure render": {
 		useCase:       "inspect the exact ARM template that would be sent to Azure without applying it.",
@@ -155,16 +156,6 @@ var commandMetadata = map[string]commandMeta{
 		useCase:       "you suspect drift between the manifest and the live app, or want a CI gate that fails on uncommitted infra changes.",
 		prerequisites: []string{prereqAzureAuth, prereqManifest, prereqAppLive},
 		dependencies:  []string{depAzureARM},
-	},
-	"lazure rollout": {
-		useCase: "end-to-end shortcut: build, push, then deploy in one command (typical local-dev push to dev/uat).",
-		prerequisites: []string{
-			prereqAzureAuth,
-			prereqManifest,
-			"Logged-in to the ACR registry (`az acr login -n <registry>`).",
-			"Every `{secret: X}` reference in the manifest must already exist in Azure Key Vault.",
-		},
-		dependencies: []string{depDocker, depAzureARM},
 	},
 	"lazure build": {
 		useCase: "build (and optionally push) the docker image only — useful when you want to control deploy separately from build.",
@@ -262,6 +253,9 @@ var commandMetadata = map[string]commandMeta{
 	},
 	"lazure schema": {
 		useCase: "emit the JSON Schema for deploy.yml so editors/CI can validate it.",
+	},
+	"lazure config": {
+		useCase: "inspect Lazure's Container App field ownership rules: managed fields, preserved external fields, ignored/read-only fields, normalized Azure defaults, and unsupported live fields that block deploy.",
 	},
 
 	// ---------- Config surface ----------

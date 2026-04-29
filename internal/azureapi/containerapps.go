@@ -44,6 +44,11 @@ type ContainerAppsClient struct {
 	maxDelay time.Duration   // cap between polls
 }
 
+type ContainerAppState struct {
+	App *azurearm.ContainerApp
+	Raw map[string]any
+}
+
 // NewContainerAppsClient returns a client pointed at the public Azure
 // management endpoint.
 func NewContainerAppsClient(tokens *TokenProvider) *ContainerAppsClient {
@@ -64,6 +69,17 @@ func containerAppPath(sub, rg, name string) string {
 // Get fetches the current state of a container app. Returns
 // ErrContainerAppNotFound if it doesn't exist yet.
 func (c *ContainerAppsClient) Get(ctx context.Context, sub, rg, name string) (*azurearm.ContainerApp, error) {
+	state, err := c.GetState(ctx, sub, rg, name)
+	if err != nil {
+		return nil, err
+	}
+	return state.App, nil
+}
+
+// GetState fetches the current app and returns both the typed Lazure view
+// and the raw Azure JSON. The raw body lets deploy detect Azure fields that
+// the typed struct would otherwise drop before a full PUT.
+func (c *ContainerAppsClient) GetState(ctx context.Context, sub, rg, name string) (*ContainerAppState, error) {
 	r, err := c.armRequest(ctx)
 	if err != nil {
 		return nil, err
@@ -71,8 +87,7 @@ func (c *ContainerAppsClient) Get(ctx context.Context, sub, rg, name string) (*a
 	url := c.base + containerAppPath(sub, rg, name)
 	slog.Debug("containerapps: GET", "url", url)
 
-	var app azurearm.ContainerApp
-	resp, err := r.SetSuccessResult(&app).Get(url)
+	resp, err := r.Get(url)
 	if err != nil {
 		return nil, errs.Wrapf(err, "containerapps: GET %s/%s", rg, name)
 	}
@@ -84,7 +99,19 @@ func (c *ContainerAppsClient) Get(ctx context.Context, sub, rg, name string) (*a
 		return nil, errs.Errorf("containerapps: GET %s/%s: %s %s",
 			rg, name, resp.Status, resp.String())
 	}
-	return &app, nil
+	body, err := resp.ToBytes()
+	if err != nil {
+		return nil, errs.Wrapf(err, "containerapps: read GET %s/%s", rg, name)
+	}
+	var app azurearm.ContainerApp
+	if err := json.Unmarshal(body, &app); err != nil {
+		return nil, errs.Wrapf(err, "containerapps: parse GET %s/%s", rg, name)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, errs.Wrapf(err, "containerapps: parse raw GET %s/%s", rg, name)
+	}
+	return &ContainerAppState{App: &app, Raw: raw}, nil
 }
 
 // PutAndWait creates or updates a container app, polling the async
@@ -98,6 +125,17 @@ func (c *ContainerAppsClient) Get(ctx context.Context, sub, rg, name string) (*a
 //
 // Both paths produce the same return value.
 func (c *ContainerAppsClient) PutAndWait(ctx context.Context, sub, rg, name string, body *azurearm.ContainerApp) (*azurearm.ContainerApp, error) {
+	return c.PutAndWaitPreservingExternalState(ctx, sub, rg, name, body, nil)
+}
+
+// PutAndWaitPreservingExternalState creates or updates a container app
+// while carrying forward Azure-owned fields that Lazure intentionally
+// does not manage declaratively. Today that means ingress.customDomains:
+// domains and certificates are configured outside deploy.yml, but a
+// full Container App PUT must still include them or Azure removes them.
+func (c *ContainerAppsClient) PutAndWaitPreservingExternalState(ctx context.Context, sub, rg, name string, body *azurearm.ContainerApp, live *azurearm.ContainerApp) (*azurearm.ContainerApp, error) {
+	preserveExternalState(body, live)
+
 	r, err := c.armRequest(ctx)
 	if err != nil {
 		return nil, err
@@ -111,6 +149,22 @@ func (c *ContainerAppsClient) PutAndWait(ctx context.Context, sub, rg, name stri
 	}
 	slog.Debug("containerapps: PUT response", "status", resp.StatusCode)
 	return c.waitForCompletion(ctx, sub, rg, name, resp, "PUT")
+}
+
+func preserveExternalState(body, live *azurearm.ContainerApp) {
+	if body == nil || live == nil {
+		return
+	}
+	if body.Properties.Configuration.Ingress == nil || live.Properties.Configuration.Ingress == nil {
+		return
+	}
+	if len(live.Properties.Configuration.Ingress.CustomDomains) == 0 {
+		return
+	}
+	body.Properties.Configuration.Ingress.CustomDomains = append(
+		[]azurearm.CustomDomain(nil),
+		live.Properties.Configuration.Ingress.CustomDomains...,
+	)
 }
 
 // PatchTrafficAndWait updates just the traffic distribution on an

@@ -60,7 +60,7 @@ test_invalid_bool_fails() {
   if lazure_build_validate_args "dev" "deploy" "maybe" "" 2>/tmp/lazure-action-test.err; then
     fail "invalid bool unexpectedly succeeded"
   fi
-  rg -q "verbose must be true or false" /tmp/lazure-action-test.err || fail "invalid bool error was not useful"
+  grep -q "verbose must be true or false" /tmp/lazure-action-test.err || fail "invalid bool error was not useful"
 }
 
 test_deploy_defaults
