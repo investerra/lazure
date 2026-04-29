@@ -76,9 +76,8 @@ Run `lazure <command> --help` for flags and examples.
 ## GitHub Actions
 
 This repo exports composite actions for app repositories that want to run
-Lazure from CI. Check out the app repo and authenticate Azure first; the
-actions build the `lazure` binary from the selected `investerra/lazure` ref
-and run it against the caller workspace.
+Lazure from CI. Install Lazure once, then call the task actions. The task
+actions assume `lazure` is already available in `PATH`.
 
 ```yaml
 permissions:
@@ -93,6 +92,10 @@ steps:
       client-id: ${{ vars.AZURE_CLIENT_ID }}
       tenant-id: ${{ vars.AZURE_TENANT_ID }}
       subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+  - uses: investerra/lazure/actions/install@v1
+    with:
+      version: v0.7.0
 
   - uses: investerra/lazure/actions/validate@v1
     with:

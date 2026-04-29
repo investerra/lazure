@@ -1,19 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ACTION_PATH="${ACTION_PATH:-${GITHUB_ACTION_PATH:-}}"
-if [[ -z "$ACTION_PATH" ]]; then
-  printf 'lazure action: ACTION_PATH or GITHUB_ACTION_PATH is required\n' >&2
+fail() {
+  printf 'lazure validate action: %s\n' "$*" >&2
   exit 1
+}
+
+env="${LAZURE_ENV:-}"
+dir="${LAZURE_DIR:-deploy}"
+verbose="${LAZURE_VERBOSE:-false}"
+extra_args="${LAZURE_EXTRA_ARGS:-}"
+
+[[ -n "$env" ]] || fail "env is required"
+[[ -n "$dir" ]] || fail "dir is required"
+
+case "$verbose" in
+  true | false) ;;
+  *) fail "verbose must be true or false" ;;
+esac
+
+args=(--dir "$dir")
+[[ "$verbose" == "true" ]] && args+=(-v)
+
+args+=(validate "$env")
+
+if [[ -n "$extra_args" ]]; then
+  # shellcheck disable=SC2206
+  extra=($extra_args)
+  args+=("${extra[@]}")
 fi
 
-# shellcheck source=lazure-action.sh
-source "$ACTION_PATH/../_lib/lazure-action.sh"
-
-lazure_build_validate_args \
-  "${LAZURE_ENV:-}" \
-  "${LAZURE_DIR:-deploy}" \
-  "${LAZURE_VERBOSE:-false}" \
-  "${LAZURE_EXTRA_ARGS:-}"
-
-"${LAZURE_BIN:-lazure}" "${LAZURE_ARGS[@]}"
+lazure "${args[@]}"

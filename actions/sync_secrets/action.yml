@@ -13,10 +13,6 @@ inputs:
     description: Enable lazure verbose logging.
     required: false
     default: "false"
-  dry-run:
-    description: Print planned Key Vault writes without updating secrets.
-    required: false
-    default: "false"
   concurrency:
     description: Number of parallel Key Vault HTTP calls.
     required: false
@@ -26,37 +22,17 @@ inputs:
     required: false
     default: ""
 
-outputs:
-  lazure-bin:
-    description: Path to the lazure binary built for this action run.
-    value: ${{ steps.install.outputs.lazure-bin }}
-
 runs:
   using: composite
   steps:
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: stable
-        cache: false
-
-    - name: Build lazure
-      id: install
-      shell: bash
-      env:
-        ACTION_PATH: ${{ github.action_path }}
-      run: bash "$ACTION_PATH/../_lib/install-lazure.sh"
-
     - name: Sync secrets
       shell: bash
       working-directory: ${{ github.workspace }}
       env:
         ACTION_PATH: ${{ github.action_path }}
-        LAZURE_BIN: ${{ steps.install.outputs.lazure-bin }}
         LAZURE_ENV: ${{ inputs.env }}
         LAZURE_DIR: ${{ inputs.dir }}
         LAZURE_VERBOSE: ${{ inputs.verbose }}
-        LAZURE_DRY_RUN: ${{ inputs.dry-run }}
         LAZURE_CONCURRENCY: ${{ inputs.concurrency }}
         LAZURE_EXTRA_ARGS: ${{ inputs.extra-args }}
       run: bash "$ACTION_PATH/../_lib/run-sync-secrets.sh"
