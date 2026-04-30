@@ -297,6 +297,21 @@ Use it to see what is active, what is ready, and which revision you can inspect,
 Use it when you need the endpoint for a browser, curl, webhook, or health check.`,
 			},
 			{
+				Name:          "wait-for-deploy",
+				Usage:         "poll the deployed app version endpoint until it reports the expected commit",
+				Arguments:     envArg(),
+				Flags:         cmd.WaitForDeployFlags(),
+				Action:        cmd.WaitForDeploy,
+				ShellComplete: cmd.CompleteEnvs,
+				Description: `Wait-for-deploy resolves the app's first custom domain, or the Container Apps FQDN when no custom domain exists, then polls its version endpoint until the reported commit matches the expected SHA.
+Use it after deploy in CI to verify the public route is serving the new build.
+
+Examples:
+  lazure wait-for-deploy uat --expected-sha "$GITHUB_SHA"
+  EXPECTED_SHA="$GITHUB_SHA" lazure wait-for-deploy uat
+  lazure wait-for-deploy prd --path /version --field commit --timeout 10m`,
+			},
+			{
 				Name:          "scale",
 				Usage:         "set replica bounds without editing the manifest",
 				Arguments:     envArg(),

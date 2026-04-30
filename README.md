@@ -50,6 +50,7 @@ lazure validate dev                 # static checks (no Azure calls)
 lazure render dev                   # preview the ARM payload
 lazure deploy dev                   # deploy (auto-waits + tails logs on TTY)
 lazure deploy dev --build           # build, push, then deploy
+lazure wait-for-deploy dev          # poll /version until the new commit is live
 ```
 
 ## Commands
@@ -60,7 +61,7 @@ lazure deploy dev --build           # build, push, then deploy
 
 ### Operations
 `status` · `logs` · `revisions` · `rollback` · `restart` · `scale` ·
-`ports` · `events` · `exec`
+`ports` · `events` · `exec` · `wait-for-deploy`
 
 ### Diagnostics
 `prime` · `doctor` · `config` · `env list` · `env diff` · `env-guess`
