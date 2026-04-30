@@ -104,11 +104,13 @@ func waitForDeploymentVersion(ctx context.Context, endpoint, expected, field str
 	if interval <= 0 {
 		interval = 10 * time.Second
 	}
-	deadline := time.Now().Add(timeout)
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	attempt := 1
 	var last string
 	for {
-		got, err := fetchVersionField(ctx, endpoint, field)
+		got, err := fetchVersionField(waitCtx, endpoint, field)
 		if err != nil {
 			last = err.Error()
 			if out != nil {
@@ -123,15 +125,19 @@ func waitForDeploymentVersion(ctx context.Context, endpoint, expected, field str
 				return nil
 			}
 		}
-		if time.Now().Add(interval).After(deadline) {
+		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
 			return errs.Errorf("timed out after %s waiting for %s to report %s=%s (last: %s)",
 				timeout, endpoint, field, expected, stringOr(last, "none"))
 		}
 		timer := time.NewTimer(interval)
 		select {
-		case <-ctx.Done():
+		case <-waitCtx.Done():
 			timer.Stop()
-			return errs.Wrap(ctx.Err(), "wait-for-deploy cancelled")
+			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+				return errs.Errorf("timed out after %s waiting for %s to report %s=%s (last: %s)",
+					timeout, endpoint, field, expected, stringOr(last, "none"))
+			}
+			return errs.Wrap(waitCtx.Err(), "wait-for-deploy cancelled")
 		case <-timer.C:
 		}
 		attempt++

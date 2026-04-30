@@ -108,3 +108,24 @@ func TestWaitForDeploymentVersion_TimesOut(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestWaitForDeploymentVersion_TimesOutStalledRequest(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(80 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"commit":"new"}`))
+	}))
+	defer srv.Close()
+
+	start := time.Now()
+	err := waitForDeploymentVersion(context.Background(), srv.URL, "new", "commit", 10*time.Millisecond, time.Millisecond, nil)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected timeout")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if elapsed > 60*time.Millisecond {
+		t.Fatalf("stalled request was not bounded by timeout; elapsed=%s", elapsed)
+	}
+}
