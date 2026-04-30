@@ -101,11 +101,11 @@ func TestRenderDeployYml_ContainsValues(t *testing.T) {
 }
 
 func TestRenderVarsYml_PerEnv_NoInferences(t *testing.T) {
-	cfg := initConfig{Name: "api-server", ResourceGroup: "dbx"}
+	cfg := initConfig{Name: "api-server", ResourceGroup: "example-rg"}
 	got := renderVarsYml("dev", cfg, envInference{}, "")
 	for _, want := range []string{
 		"app_env: dev",
-		"resource_group: rg-example-dev", // <env>-<rg> pattern (matches user's real config)
+		"resource_group: dev-example-rg", // <env>-<rg> pattern
 		"TODO",                    // placeholders present
 		"yourregistry.azurecr.io", // placeholder ACR
 	} {
@@ -116,19 +116,19 @@ func TestRenderVarsYml_PerEnv_NoInferences(t *testing.T) {
 }
 
 func TestRenderVarsYml_WithInferences_InlinesValues(t *testing.T) {
-	cfg := initConfig{Name: "example-service", ResourceGroup: "dbx"}
+	cfg := initConfig{Name: "example-service", ResourceGroup: "example-rg"}
 	inf := envInference{
 		ManagedEnv: "/subscriptions/SUB/resourceGroups/rg-example-dev/providers/Microsoft.App/managedEnvironments/me-dev",
 		Identity:   "/subscriptions/SUB/resourceGroups/rg-example-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/mi-dev",
 		ACRServer:  "example.azurecr.io",
 	}
-	got := renderVarsYml("dev", cfg, inf, "investerra")
+	got := renderVarsYml("dev", cfg, inf, "example-org")
 
 	for _, want := range []string{
 		"managedEnvironments/me-dev",
 		"userAssignedIdentities/mi-dev",
 		"acr_server: example.azurecr.io",
-		`docker_image: "example.azurecr.io/investerra/example-service:{{ .Vars.git_commit }}"`,
+		`docker_image: "example.azurecr.io/example-org/example-service:{{ .Vars.git_commit }}"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
@@ -149,7 +149,7 @@ func TestRenderVarsYml_WithInferences_InlinesValues(t *testing.T) {
 func TestRenderVarsYml_PartialInferences(t *testing.T) {
 	// Only ACR known — image should still compose (without org since
 	// gitOrg is empty), but managed env + identity keep their TODOs.
-	cfg := initConfig{Name: "example-service", ResourceGroup: "dbx"}
+	cfg := initConfig{Name: "example-service", ResourceGroup: "example-rg"}
 	inf := envInference{ACRServer: "someacr.azurecr.io"}
 	got := renderVarsYml("dev", cfg, inf, "")
 
@@ -164,8 +164,8 @@ func TestRenderVarsYml_PartialInferences(t *testing.T) {
 // ---------- composeDockerImage ----------
 
 func TestComposeDockerImage_ACRPlusOrg(t *testing.T) {
-	got := composeDockerImage("acr.azurecr.io", "investerra", "example-service")
-	want := "acr.azurecr.io/investerra/example-service:{{ .Vars.git_commit }}"
+	got := composeDockerImage("acr.azurecr.io", "example-org", "example-service")
+	want := "acr.azurecr.io/example-org/example-service:{{ .Vars.git_commit }}"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -207,29 +207,29 @@ func TestInferAppNameFromCwd_UsesBasename(t *testing.T) {
 // ---------- parseGitRemote ----------
 
 func TestParseGitRemote_HTTPS(t *testing.T) {
-	host, org, repo := parseGitRemote("https://github.com/investerra/example-service.git")
-	if host != "github.com" || org != "investerra" || repo != "example-service" {
+	host, org, repo := parseGitRemote("https://github.com/example-org/example-service.git")
+	if host != "github.com" || org != "example-org" || repo != "example-service" {
 		t.Errorf("host=%q org=%q repo=%q", host, org, repo)
 	}
 }
 
 func TestParseGitRemote_SSH(t *testing.T) {
-	host, org, repo := parseGitRemote("git@github.com:investerra/example-service.git")
-	if host != "github.com" || org != "investerra" || repo != "example-service" {
+	host, org, repo := parseGitRemote("git@github.com:example-org/example-service.git")
+	if host != "github.com" || org != "example-org" || repo != "example-service" {
 		t.Errorf("host=%q org=%q repo=%q", host, org, repo)
 	}
 }
 
 func TestParseGitRemote_WithoutGitSuffix(t *testing.T) {
-	_, org, repo := parseGitRemote("https://github.com/investerra/example-service")
-	if org != "investerra" || repo != "example-service" {
+	_, org, repo := parseGitRemote("https://github.com/example-org/example-service")
+	if org != "example-org" || repo != "example-service" {
 		t.Errorf("org=%q repo=%q", org, repo)
 	}
 }
 
 func TestParseGitRemote_TrailingSlash(t *testing.T) {
-	_, org, repo := parseGitRemote("https://github.com/investerra/example-service/")
-	if org != "investerra" || repo != "example-service" {
+	_, org, repo := parseGitRemote("https://github.com/example-org/example-service/")
+	if org != "example-org" || repo != "example-service" {
 		t.Errorf("org=%q repo=%q", org, repo)
 	}
 }

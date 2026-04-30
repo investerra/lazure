@@ -1,7 +1,7 @@
 package sopsio
 
 import (
-	"os/exec"
+	"os"
 	"strings"
 	"testing"
 )
@@ -139,15 +139,12 @@ sops:
 	}
 }
 
-// TestDecrypt_Integration is a live smoke test against the api-server
-// fixture. It requires Azure credentials (DefaultAzureCredential chain)
-// AND network access to kv-example. Skipped in CI-without-auth.
+// TestDecrypt_Integration is a live smoke test against an opt-in encrypted
+// fixture. Set LAZURE_INTEGRATION_SOPS_FILE to run it.
 func TestDecrypt_Integration(t *testing.T) {
-	const fixturePath = "../../deploy/envs/dev.secrets.yml"
-
-	// Skip if `az account show` fails — we don't have credentials to decrypt.
-	if err := exec.Command("az", "account", "show").Run(); err != nil {
-		t.Skip("skipping: no Azure credentials available (az account show failed)")
+	fixturePath := os.Getenv("LAZURE_INTEGRATION_SOPS_FILE")
+	if fixturePath == "" {
+		t.Skip("skipping: LAZURE_INTEGRATION_SOPS_FILE not set")
 	}
 
 	got, err := Decrypt(fixturePath)

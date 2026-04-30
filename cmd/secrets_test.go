@@ -5,7 +5,6 @@ import (
 	"context"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,7 +22,7 @@ func TestRedact(t *testing.T) {
 		{"short6", "***"},        // exactly 6 chars = "***"
 		{"1234567", "123…567"},   // 7 chars → first 3 + … + last 3 (overlapping middle "4")
 		{"hunter2pass", "hun…ass"},
-		{"sample-secret-value", "SG.…bKL"},
+		{"sample-secret-value", "sam…lue"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
@@ -265,12 +264,13 @@ func TestSecretsNew_ErrorsWhenFileExists(t *testing.T) {
 
 // ---------- view (integration) ----------
 
-// TestSecretsView_Integration runs the full view command against the
-// real api-server fixture. Skipped without Azure creds since decrypt
-// needs KV access.
+// TestSecretsView_Integration runs the full view command against an
+// opt-in encrypted fixture. Set LAZURE_INTEGRATION_PROJECT_DIR to a
+// project deploy directory when running live SOPS/KV tests.
 func TestSecretsView_Integration(t *testing.T) {
-	if exec.Command("az", "account", "show").Run() != nil {
-		t.Skip("skipping: no Azure credentials")
+	dir := os.Getenv("LAZURE_INTEGRATION_PROJECT_DIR")
+	if dir == "" {
+		t.Skip("skipping: LAZURE_INTEGRATION_PROJECT_DIR not set")
 	}
 
 	// Capture stdout.
@@ -282,15 +282,14 @@ func TestSecretsView_Integration(t *testing.T) {
 	os.Stdout = w
 	t.Cleanup(func() { os.Stdout = orig })
 
-	// Use the real deploy/ fixture.
-	dir, err := filepath.Abs("../deploy")
+	projectDir, err := filepath.Abs(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	app := &cli.Command{
 		Name:  "lazure",
-		Flags: []cli.Flag{&cli.StringFlag{Name: "dir", Value: dir}},
+		Flags: []cli.Flag{&cli.StringFlag{Name: "dir", Value: projectDir}},
 		Commands: []*cli.Command{
 			{
 				Name:      "secrets",
@@ -303,7 +302,7 @@ func TestSecretsView_Integration(t *testing.T) {
 			},
 		},
 	}
-	runErr := app.Run(context.Background(), []string{"lazure", "--dir", dir, "secrets", "dev"})
+	runErr := app.Run(context.Background(), []string{"lazure", "--dir", projectDir, "secrets", "dev"})
 	w.Close()
 	os.Stdout = orig
 
@@ -360,4 +359,3 @@ func TestSecretsView_InvalidFormat(t *testing.T) {
 	// Missing fixture triggers decrypt failure first; that's fine. The
 	// key test is that the command at least parses + runs.
 }
-

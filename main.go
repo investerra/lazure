@@ -405,7 +405,7 @@ It writes a starter manifest, env vars, secrets files, and schema wiring so the 
 
 Examples:
   lazure init                             interactive (prompts for name etc.)
-  lazure init --quiet --name api --resource-group dbx
+  lazure init --quiet --name api --resource-group app-rg
   lazure init --force                     overwrite an existing deploy.yml`,
 			},
 			{

@@ -2,7 +2,6 @@ package sopsio
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,13 +13,13 @@ import (
 //	→ decrypt again → verify the modification is present AND that the
 //	SOPS metadata (vault URL, version) is preserved
 //
-// Skipped if Azure credentials aren't available (`az account show` fails).
+// Set LAZURE_INTEGRATION_SOPS_FILE to an encrypted fixture when running
+// live SOPS/KV tests.
 func TestEncrypt_Integration(t *testing.T) {
-	if err := exec.Command("az", "account", "show").Run(); err != nil {
-		t.Skip("skipping: no Azure credentials available (az account show failed)")
+	srcEncrypted := os.Getenv("LAZURE_INTEGRATION_SOPS_FILE")
+	if srcEncrypted == "" {
+		t.Skip("skipping: LAZURE_INTEGRATION_SOPS_FILE not set")
 	}
-
-	srcEncrypted := "../../deploy/envs/dev.secrets.yml"
 
 	// Copy the encrypted file to a temp location so we don't mutate the fixture.
 	dir := t.TempDir()
@@ -110,13 +109,14 @@ func TestEncrypt_BootstrapWithoutConfig(t *testing.T) {
 }
 
 func TestEncrypt_MissingPlainFile(t *testing.T) {
-	if err := exec.Command("az", "account", "show").Run(); err != nil {
-		t.Skip("skipping: no Azure credentials to load fixture metadata")
+	srcEncrypted := os.Getenv("LAZURE_INTEGRATION_SOPS_FILE")
+	if srcEncrypted == "" {
+		t.Skip("skipping: LAZURE_INTEGRATION_SOPS_FILE not set")
 	}
 
 	dir := t.TempDir()
 	workingEnc := filepath.Join(dir, "dev.secrets.yml")
-	if err := copyFile("../../deploy/envs/dev.secrets.yml", workingEnc); err != nil {
+	if err := copyFile(srcEncrypted, workingEnc); err != nil {
 		t.Fatal(err)
 	}
 

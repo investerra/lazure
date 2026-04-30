@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os/exec"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -33,14 +33,6 @@ func newMockClient(t *testing.T, handler http.Handler) (*KeyVaultClient, *httpte
 	t.Cleanup(srv.Close)
 	tokens := newTokenProviderWith(&stubCred{token: "tok-123"})
 	return NewKeyVaultClient(srv.URL, tokens), srv
-}
-
-// hasAzureCreds reports whether `az account show` succeeds — the same
-// check used by other integration tests in this repo to skip cleanly
-// when credentials aren't available.
-func hasAzureCreds(t *testing.T) bool {
-	t.Helper()
-	return exec.Command("az", "account", "show").Run() == nil
 }
 
 // requireAuthAndVersion asserts the request has a bearer token and the
@@ -297,25 +289,25 @@ func TestSecretNameFromID(t *testing.T) {
 
 // ---------- integration ----------
 
-// TestKeyVault_Integration hits real integration vault when Azure creds are
-// available. Proves the auth chain + URL shape + response decoding
-// line up against live Azure.
+// TestKeyVault_Integration hits an opt-in live vault. Set
+// LAZURE_INTEGRATION_KEYVAULT_URL when running live Azure tests.
 func TestKeyVault_Integration(t *testing.T) {
-	if !hasAzureCreds(t) {
-		t.Skip("skipping: no Azure credentials")
+	vaultURL := os.Getenv("LAZURE_INTEGRATION_KEYVAULT_URL")
+	if vaultURL == "" {
+		t.Skip("skipping: LAZURE_INTEGRATION_KEYVAULT_URL not set")
 	}
 	tokens, err := NewTokenProvider()
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := NewKeyVaultClient("https://kv-example.vault.azure.net", tokens)
+	c := NewKeyVaultClient(vaultURL, tokens)
 
 	exists, err := c.SecretExists(context.Background(), "nexus-database-url")
 	if err != nil {
 		t.Fatalf("SecretExists failed: %v", err)
 	}
 	if !exists {
-		t.Error("nexus-database-url should exist in integration vault — check the fixture is up to date")
+		t.Error("nexus-database-url should exist in the integration vault")
 	}
 
 	names, err := c.ListSecrets(context.Background())
@@ -323,7 +315,7 @@ func TestKeyVault_Integration(t *testing.T) {
 		t.Fatalf("ListSecrets failed: %v", err)
 	}
 	if len(names) == 0 {
-		t.Error("ListSecrets returned empty — integration vault should have at least the nexus-* secrets")
+		t.Error("ListSecrets returned empty")
 	}
 }
 
