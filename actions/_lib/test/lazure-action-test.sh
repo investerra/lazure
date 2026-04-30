@@ -32,6 +32,37 @@ EOF
   export PATH="$tmp/bin:$PATH"
 }
 
+with_fake_lazure_failed_deploy() {
+  local tmp="$1"
+
+  mkdir -p "$tmp/bin"
+  cat > "$tmp/bin/lazure" <<'EOF'
+#!/usr/bin/env bash
+printf '<%s>' "$@" >> "$LAZURE_CAPTURE"
+printf '\n' >> "$LAZURE_CAPTURE"
+
+for arg in "$@"; do
+  if [[ "$arg" == "deploy" ]]; then
+    exit 42
+  fi
+done
+EOF
+  chmod +x "$tmp/bin/lazure"
+
+  cat > "$tmp/bin/date" <<'EOF'
+#!/usr/bin/env bash
+state="${LAZURE_FAKE_DATE_STATE:-/tmp/lazure-fake-date-state}"
+if [[ ! -f "$state" ]]; then
+  printf '100'
+  : > "$state"
+else
+  printf '105'
+fi
+EOF
+  chmod +x "$tmp/bin/date"
+  export PATH="$tmp/bin:$PATH"
+}
+
 test_deploy_defaults() {
   local tmp
   tmp="$(mktemp -d)"
@@ -67,6 +98,23 @@ test_deploy_vars_and_extra_args() {
 
   assert_capture "deploy vars and extra args" \
     "<--dir><infra><-v><deploy><uat><-y><--wait=false><--logs=false><--wait-timeout><10m><--force><--var><image=repo/app:sha><--var><version=42><--print>"
+}
+
+test_deploy_failure_dumps_diagnostics() {
+  local tmp
+  tmp="$(mktemp -d)"
+  LAZURE_CAPTURE="$tmp/capture"
+  LAZURE_FAKE_DATE_STATE="$tmp/date-state"
+  export LAZURE_CAPTURE
+  export LAZURE_FAKE_DATE_STATE
+  with_fake_lazure_failed_deploy "$tmp"
+
+  if LAZURE_ENV=uat LAZURE_DIR=infra bash "$LIB_DIR/run-deploy.sh" 2>/tmp/lazure-action-test.err; then
+    fail "failed deploy unexpectedly succeeded"
+  fi
+
+  assert_capture "deploy failure diagnostics" \
+    $'<--dir><infra><deploy><uat><-y><--wait=true><--logs=true><--wait-timeout><5m><--no-color>\n<--dir><infra><logs><uat><--tail><20><--follow=false><--no-color>\n<--dir><infra><events><uat><--since><5s><--limit><20><--expand><--no-color>'
 }
 
 test_sync_secrets() {
@@ -170,6 +218,7 @@ test_install_action_surface() {
 
 test_deploy_defaults
 test_deploy_vars_and_extra_args
+test_deploy_failure_dumps_diagnostics
 test_sync_secrets
 test_validate
 test_invalid_bool_fails

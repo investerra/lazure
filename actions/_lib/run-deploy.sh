@@ -55,4 +55,43 @@ if [[ -n "$extra_args" ]]; then
   args+=("${extra[@]}")
 fi
 
+diagnostic_color_args=()
+[[ "$color" == "false" ]] && diagnostic_color_args+=(--no-color)
+
+started_at="$(date +%s)"
+
+diagnostic_since() {
+  local now elapsed
+
+  now="$(date +%s)"
+  elapsed=$((now - started_at))
+  if [[ "$elapsed" -lt 1 ]]; then
+    elapsed=1
+  fi
+  printf '%ss' "$elapsed"
+}
+
+dump_failure_diagnostics() {
+  local since
+
+  printf 'lazure deploy action: deploy failed, dumping recent container logs\n' >&2
+  if ! lazure --dir "$dir" logs "$env" --tail 20 --follow=false "${diagnostic_color_args[@]}"; then
+    printf 'lazure deploy action: failed to dump container logs\n' >&2
+  fi
+
+  since="$(diagnostic_since)"
+  printf 'lazure deploy action: dumping recent Azure events\n' >&2
+  if ! lazure --dir "$dir" events "$env" --since "$since" --limit 20 --expand "${diagnostic_color_args[@]}"; then
+    printf 'lazure deploy action: failed to dump Azure events\n' >&2
+  fi
+}
+
+set +e
 lazure "${args[@]}"
+status=$?
+set -e
+
+if [[ "$status" -ne 0 ]]; then
+  dump_failure_diagnostics
+  exit "$status"
+fi
