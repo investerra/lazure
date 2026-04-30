@@ -27,6 +27,11 @@ func TestBuildDoc_IncludesPrimeAgentGuide(t *testing.T) {
 			t.Errorf("agent guide missing %q:\n%s", want, guide)
 		}
 	}
+	for _, want := range []string{"actions/install", "actions/env_guess", "actions/wait_for_deploy"} {
+		if !strings.Contains(guide, want) {
+			t.Errorf("agent guide missing action %q:\n%s", want, guide)
+		}
+	}
 
 	var paths []string
 	for _, cat := range doc.Categories {

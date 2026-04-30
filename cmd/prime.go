@@ -392,6 +392,7 @@ func agentGuide() []string {
 		"After deploy or runtime failures, inspect `lazure events <env> --expand` and `lazure logs <env> --tail 20`; use `--since` when you need only recent diagnostics.",
 		"Use `lazure status <env>`, `lazure revisions <env>`, `lazure rollback <env>`, `lazure restart <env>`, `lazure scale <env>`, `lazure ports <env>`, and `lazure exec <env>` for day-two operations.",
 		"Use `lazure secrets ...` for SOPS and Key Vault-backed secrets, and `lazure vars ...` for plain environment variables.",
+		"In GitHub Actions, install the released binary with `actions/install` first; task actions such as `actions/env_guess`, `actions/validate`, `actions/sync_secrets`, `actions/deploy`, and `actions/wait_for_deploy` assume `lazure` is already on PATH.",
 		"`lazure config` documents the Container App mapping rules: managed fields, preserved external fields, ignored read-only fields, normalized Azure defaults, and unsupported live fields.",
 		"`lazure events --expand` and revealed secrets output may contain sensitive operational details; avoid pasting them into public logs.",
 	}
