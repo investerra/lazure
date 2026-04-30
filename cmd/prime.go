@@ -93,9 +93,10 @@ var commandCategory = map[string]string{
 	"exec":      "Ops / day-two",
 	"doctor":    "Ops / day-two",
 
-	"init":   "Onboarding",
-	"env":    "Onboarding",
-	"schema": "Onboarding",
+	"init":      "Onboarding",
+	"env":       "Onboarding",
+	"env-guess": "Onboarding",
+	"schema":    "Onboarding",
 
 	"secrets": "Config surface",
 	"vars":    "Config surface",
@@ -251,6 +252,10 @@ var commandMetadata = map[string]commandMeta{
 		useCase:       "spot asymmetries — vars/secrets that differ across envs, orphans, or missing entries the next deploy would fail on.",
 		prerequisites: []string{prereqSops, "All `envs/<env>.secrets.yml` files exist (one per env)."},
 		dependencies:  []string{depSops},
+	},
+	"lazure env-guess": {
+		useCase:      "choose the deployment environment from GitHub ref variables or the local git branch/tag; useful in CI before validate, secrets sync, and deploy.",
+		dependencies: []string{"`git` binary on PATH when REF_NAME/GITHUB_REF_NAME is not provided."},
 	},
 	"lazure schema": {
 		useCase: "emit the JSON Schema for deploy.yml so editors/CI can validate it.",

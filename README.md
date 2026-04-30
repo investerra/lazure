@@ -43,6 +43,7 @@ access works without setting `GITHUB_TOKEN` explicitly.
 ```sh
 lazure init                         # scaffold ./deploy/
 lazure prime                        # print the agent guide + command reference
+lazure env-guess                    # map current branch/tag to deploy env
 lazure secrets edit dev             # fill in + encrypt secrets
 lazure doctor                       # preflight: git/editor/az/gh/auth + per-env
 lazure validate dev                 # static checks (no Azure calls)
@@ -62,7 +63,7 @@ lazure deploy dev --build           # build, push, then deploy
 `ports` · `events` · `exec`
 
 ### Diagnostics
-`prime` · `doctor` · `config` · `env list` · `env diff`
+`prime` · `doctor` · `config` · `env list` · `env diff` · `env-guess`
 
 ### Configuration
 `init` · `schema` · `secrets {view,edit,verify,sync}` ·
