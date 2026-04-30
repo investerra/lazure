@@ -25,3 +25,4 @@ envs/*.secrets.plain.yml
 .claude/
 .codex
 /var/
+deploy/
