@@ -78,6 +78,7 @@ var commandCategory = map[string]string{
 	"render":      "Deploy pipeline",
 	"diff":        "Deploy pipeline",
 	"build":       "Deploy pipeline",
+	"rollout":     "Deploy pipeline",
 	"release":     "Deploy pipeline",
 	"self-update": "Deploy pipeline",
 
@@ -167,6 +168,17 @@ var commandMetadata = map[string]commandMeta{
 			"With `--push`: logged-in to the ACR registry (`az acr login -n <registry>`).",
 		},
 		dependencies: []string{depDocker},
+	},
+	"lazure rollout": {
+		useCase: "ship the current clean git commit end to end: semver tag, image build/push, secrets sync, git push, deploy, and public version verification.",
+		prerequisites: []string{
+			"Git working tree must be completely clean; rollout never commits or stages files.",
+			prereqAzureAuth,
+			prereqManifest,
+			"Running docker daemon and `az` CLI available unless `--no-build` is used.",
+			"Push access to the `origin` remote unless `--no-push` is used.",
+		},
+		dependencies: []string{depGit, depAzureARM, depDocker, "`az` CLI for ACR login/push."},
 	},
 	"lazure release": {
 		useCase: "cut a calver-tagged production release; the tag triggers the production GH Actions pipeline. `--force` records a force redeploy timestamp marker in the tag body for downstream deploy workflows.",

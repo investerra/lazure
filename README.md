@@ -51,12 +51,13 @@ lazure render dev                   # preview the ARM payload
 lazure deploy dev                   # deploy (auto-waits + tails logs on TTY)
 lazure deploy dev --build           # build, push, then deploy
 lazure wait-for-deploy dev          # poll /version until the new commit is live
+lazure rollout uat -y               # tag, build, sync secrets, push, deploy, verify
 ```
 
 ## Commands
 
 ### Pipeline
-`deploy` · `build` · `render` · `diff` · `validate` · `release` ·
+`deploy` · `rollout` · `build` · `render` · `diff` · `validate` · `release` ·
 `self-update`
 
 ### Operations
