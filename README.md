@@ -120,6 +120,21 @@ steps:
     with:
       env: dev
       force: false
+
+  - uses: investerra/lazure/actions/wait_for_deploy@v1
+    with:
+      env: dev
+```
+
+Environment detection can replace app-local branch-mapping scripts:
+
+```yaml
+  - id: env
+    uses: investerra/lazure/actions/env_guess@v1
+
+  - uses: investerra/lazure/actions/validate@v1
+    with:
+      env: ${{ steps.env.outputs.environment }}
 ```
 
 ## Editor integration

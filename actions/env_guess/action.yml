@@ -1,0 +1,40 @@
+name: Lazure env guess
+description: Guess a Lazure deployment environment from the current GitHub ref.
+
+inputs:
+  env:
+    description: Explicit environment override.
+    required: false
+    default: ""
+  ref-type:
+    description: Git ref type, usually branch or tag.
+    required: false
+    default: ""
+  ref-name:
+    description: Git ref name.
+    required: false
+    default: ""
+  extra-args:
+    description: Additional whitespace-separated arguments appended to lazure env-guess.
+    required: false
+    default: ""
+
+outputs:
+  environment:
+    description: Guessed Lazure environment.
+    value: ${{ steps.env_guess.outputs.environment }}
+
+runs:
+  using: composite
+  steps:
+    - name: Guess environment
+      id: env_guess
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        LAZURE_INPUT_ENV: ${{ inputs.env }}
+        LAZURE_REF_TYPE: ${{ inputs.ref-type }}
+        LAZURE_REF_NAME: ${{ inputs.ref-name }}
+        LAZURE_EXTRA_ARGS: ${{ inputs.extra-args }}
+      run: bash "$ACTION_PATH/../_lib/run-env-guess.sh"

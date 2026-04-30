@@ -147,6 +147,96 @@ test_validate() {
     "<--dir><deploy><-v><validate><prd>"
 }
 
+test_env_guess() {
+  local tmp output
+  tmp="$(mktemp -d)"
+  output="$tmp/github-output"
+  LAZURE_CAPTURE="$tmp/capture"
+  export LAZURE_CAPTURE
+  with_fake_lazure "$tmp"
+
+  GITHUB_OUTPUT="$output" \
+    LAZURE_INPUT_ENV= \
+    LAZURE_REF_TYPE=branch \
+    LAZURE_REF_NAME=main \
+    bash "$LIB_DIR/run-env-guess.sh"
+
+  assert_capture "env guess" \
+    "<env-guess><--ref-type><branch><--ref-name><main><--github-output>"
+}
+
+test_env_guess_input_override() {
+  local tmp output
+  tmp="$(mktemp -d)"
+  output="$tmp/github-output"
+  LAZURE_CAPTURE="$tmp/capture"
+  export LAZURE_CAPTURE
+  with_fake_lazure "$tmp"
+
+  GITHUB_OUTPUT="$output" \
+    LAZURE_INPUT_ENV=prd \
+    LAZURE_REF_TYPE=branch \
+    LAZURE_REF_NAME=main \
+    bash "$LIB_DIR/run-env-guess.sh"
+
+  assert_capture "env guess input override" \
+    "<env-guess><--env><prd><--ref-type><branch><--ref-name><main><--github-output>"
+}
+
+test_env_guess_github_env_fallback() {
+  local tmp output
+  tmp="$(mktemp -d)"
+  output="$tmp/github-output"
+  LAZURE_CAPTURE="$tmp/capture"
+  export LAZURE_CAPTURE
+  with_fake_lazure "$tmp"
+
+  GITHUB_OUTPUT="$output" \
+    GITHUB_REF_TYPE=tag \
+    GITHUB_REF_NAME=v1 \
+    bash "$LIB_DIR/run-env-guess.sh"
+
+  assert_capture "env guess github env fallback" \
+    "<env-guess><--ref-type><tag><--ref-name><v1><--github-output>"
+}
+
+test_wait_for_deploy_defaults() {
+  local tmp
+  tmp="$(mktemp -d)"
+  LAZURE_CAPTURE="$tmp/capture"
+  export LAZURE_CAPTURE
+  with_fake_lazure "$tmp"
+
+  LAZURE_ENV=uat \
+    GITHUB_SHA=abc123 \
+    bash "$LIB_DIR/run-wait-for-deploy.sh"
+
+  assert_capture "wait for deploy defaults" \
+    "<--dir><deploy><wait-for-deploy><uat><--expected-sha><abc123><--path></version><--field><commit><--timeout><5m><--interval><10s>"
+}
+
+test_wait_for_deploy_custom_args() {
+  local tmp
+  tmp="$(mktemp -d)"
+  LAZURE_CAPTURE="$tmp/capture"
+  export LAZURE_CAPTURE
+  with_fake_lazure "$tmp"
+
+  LAZURE_ENV=prd \
+    LAZURE_DIR=infra \
+    LAZURE_VERBOSE=true \
+    LAZURE_EXPECTED_SHA=def456 \
+    LAZURE_PATH=/internal/version \
+    LAZURE_FIELD=git_sha \
+    LAZURE_TIMEOUT=10m \
+    LAZURE_INTERVAL=5s \
+    LAZURE_EXTRA_ARGS=--quiet \
+    bash "$LIB_DIR/run-wait-for-deploy.sh"
+
+  assert_capture "wait for deploy custom args" \
+    "<--dir><infra><-v><wait-for-deploy><prd><--expected-sha><def456><--path></internal/version><--field><git_sha><--timeout><10m><--interval><5s><--quiet>"
+}
+
 test_invalid_bool_fails() {
   if LAZURE_ENV=dev LAZURE_VERBOSE=maybe bash "$LIB_DIR/run-validate.sh" 2>/tmp/lazure-action-test.err; then
     fail "invalid bool unexpectedly succeeded"
@@ -200,7 +290,7 @@ test_actions_do_not_build_from_source() {
 }
 
 test_dependent_actions_assume_lazure_on_path() {
-  for action in deploy sync_secrets validate; do
+  for action in deploy sync_secrets validate env_guess wait_for_deploy; do
     if grep -q 'investerra/lazure/actions/install\|version:\|github-token\|lazure-bin\|LAZURE_BIN' "$LIB_DIR/../$action/action.yml"; then
       fail "$action must assume lazure is already available in PATH"
     fi
@@ -221,6 +311,11 @@ test_deploy_vars_and_extra_args
 test_deploy_failure_dumps_diagnostics
 test_sync_secrets
 test_validate
+test_env_guess
+test_env_guess_input_override
+test_env_guess_github_env_fallback
+test_wait_for_deploy_defaults
+test_wait_for_deploy_custom_args
 test_invalid_bool_fails
 test_install_from_cached_binary
 test_install_requires_token_on_cache_miss
