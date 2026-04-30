@@ -82,6 +82,9 @@ func Init(ctx context.Context, c *cli.Command) error {
 	if err := updateGitignore(".gitignore", []string{".lazure/"}); err != nil {
 		return errs.System(errs.Wrap(err, "init: update .gitignore"))
 	}
+	if err := updateAgents("AGENTS.md"); err != nil {
+		return errs.System(errs.Wrap(err, "init: update AGENTS.md"))
+	}
 
 	printInferenceSummary(inferences)
 	printNextSteps(cfg, dir)
@@ -439,6 +442,48 @@ func gitignorePatternsToAppend(existing string, want []string) []string {
 		}
 	}
 	return missing
+}
+
+// ---------- AGENTS.md ----------
+
+const (
+	agentsLazureBlockStart = "<!-- BEGIN LAZURE INTEGRATION -->"
+	agentsLazureBlockEnd   = "<!-- END LAZURE INTEGRATION -->"
+)
+
+func updateAgents(path string) error {
+	existing := ""
+	if b, err := os.ReadFile(path); err == nil {
+		existing = string(b)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if strings.Contains(existing, agentsLazureBlockStart) {
+		return nil
+	}
+	var b strings.Builder
+	b.WriteString(existing)
+	if existing != "" && !strings.HasSuffix(existing, "\n") {
+		b.WriteString("\n")
+	}
+	if existing != "" {
+		b.WriteString("\n")
+	}
+	b.WriteString(agentsLazureBlock())
+	return os.WriteFile(path, []byte(b.String()), 0o644)
+}
+
+func agentsLazureBlock() string {
+	return agentsLazureBlockStart + `
+## Lazure
+
+This project uses Lazure to manage Azure Container Apps deployment and configuration. Agents working in this repository should run ` + "`lazure prime`" + ` at the start of a new session to load the current command guide.
+
+Use ` + "`lazure doctor`" + `, ` + "`lazure validate <env>`" + `, ` + "`lazure diff <env>`" + `, ` + "`lazure deploy <env> --wait --logs`" + `, ` + "`lazure status <env>`" + `, ` + "`lazure events <env> --expand`" + `, and ` + "`lazure logs <env>`" + ` instead of ad hoc Azure Portal or Azure CLI changes for Lazure-managed app state.
+
+Manage encrypted secrets with ` + "`lazure secrets ...`" + ` and plain environment variables with ` + "`lazure vars ...`" + `.
+` + agentsLazureBlockEnd + `
+`
 }
 
 // ---------- next steps ----------

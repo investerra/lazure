@@ -106,8 +106,8 @@ func TestRenderVarsYml_PerEnv_NoInferences(t *testing.T) {
 	for _, want := range []string{
 		"app_env: dev",
 		"resource_group: dev-example-rg", // <env>-<rg> pattern
-		"TODO",                    // placeholders present
-		"yourregistry.azurecr.io", // placeholder ACR
+		"TODO",                           // placeholders present
+		"yourregistry.azurecr.io",        // placeholder ACR
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
@@ -465,5 +465,56 @@ func TestUpdateGitignore_Idempotent(t *testing.T) {
 	if string(before) != string(after) {
 		t.Errorf("file changed when all patterns already present\nbefore:\n%s\nafter:\n%s",
 			before, after)
+	}
+}
+
+// ---------- AGENTS.md ----------
+
+func TestUpdateAgents_CreatesLazureBlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "AGENTS.md")
+	if err := updateAgents(path); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(b)
+	for _, want := range []string{
+		"BEGIN LAZURE INTEGRATION",
+		"`lazure prime`",
+		"Azure Container Apps",
+		"`lazure deploy <env> --wait --logs`",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestUpdateAgents_AppendsOnce(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "AGENTS.md")
+	initial := "# Agent Instructions\n\nExisting notes.\n"
+	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := updateAgents(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := updateAgents(path); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(b)
+	if !strings.HasPrefix(content, initial) {
+		t.Fatalf("existing content not preserved:\n%s", content)
+	}
+	if got := strings.Count(content, "BEGIN LAZURE INTEGRATION"); got != 1 {
+		t.Fatalf("expected one lazure block, got %d:\n%s", got, content)
 	}
 }

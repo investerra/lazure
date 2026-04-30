@@ -11,10 +11,10 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// Llm implements `lazure llm`. Walks the command tree from the root,
-// builds a structured documentation tree, and emits it either as
-// markdown (default) or JSON (--json).
-func Llm(ctx context.Context, c *cli.Command) error {
+// Prime implements `lazure prime`. It walks the command tree from the
+// root, combines it with agent operating guidance, and emits markdown
+// (default) or JSON (--json).
+func Prime(ctx context.Context, c *cli.Command) error {
 	root := c.Root()
 	doc := buildDoc(root)
 	if c.Bool("json") {
@@ -29,6 +29,7 @@ type Doc struct {
 	Name        string        `json:"name"`
 	Usage       string        `json:"usage,omitempty"`
 	Invocation  string        `json:"invocation,omitempty"`
+	AgentGuide  []string      `json:"agent_guide,omitempty"`
 	Notes       []string      `json:"notes,omitempty"`
 	GlobalFlags []FlagDoc     `json:"global_flags,omitempty"`
 	Categories  []CategoryDoc `json:"categories"`
@@ -100,7 +101,7 @@ var commandCategory = map[string]string{
 	"vars":    "Config surface",
 
 	"config": "Documentation",
-	"llm":    "Documentation",
+	"prime":  "Documentation",
 }
 
 var categoryOrder = []string{
@@ -325,8 +326,8 @@ var commandMetadata = map[string]commandMeta{
 	},
 
 	// ---------- Documentation ----------
-	"lazure llm": {
-		useCase: "produce an LLM-friendly reference of every command, flag, prerequisite and use case (this document).",
+	"lazure prime": {
+		useCase: "prepare coding agents for this repo by printing Lazure operating guidance plus every command, flag, prerequisite and use case.",
 	},
 }
 
@@ -345,6 +346,7 @@ func buildDoc(root *cli.Command) Doc {
 		Name:       root.Name,
 		Usage:      root.Usage,
 		Invocation: fmt.Sprintf("%s [global-flags] <command> [args] [flags]", root.Name),
+		AgentGuide: agentGuide(),
 		Notes: []string{
 			"Commands that act on a deployed app accept an `<env>` positional argument naming the target environment (e.g. `dev`, `uat`, `prd`).",
 			"Each environment maps to `deploy/envs/<env>.vars.yml` for plain-text vars and `deploy/envs/<env>.secrets.yml` for SOPS-encrypted secrets.",
@@ -369,6 +371,19 @@ func buildDoc(root *cli.Command) Doc {
 		d.Categories = append(d.Categories, cat)
 	}
 	return d
+}
+
+func agentGuide() []string {
+	return []string{
+		"Run `lazure prime` at the start of a new agent session in repositories that use Lazure.",
+		"Lazure is the project-level interface for Azure Container Apps management: prefer it over ad hoc Azure Portal or Azure CLI changes for Lazure-managed state.",
+		"Typical safe workflow: `lazure doctor`, `lazure validate <env>`, `lazure diff <env>`, then `lazure deploy <env> --wait --logs`.",
+		"After deploy or runtime failures, inspect `lazure events <env> --expand` and `lazure logs <env> --tail 20`; use `--since` when you need only recent diagnostics.",
+		"Use `lazure status <env>`, `lazure revisions <env>`, `lazure rollback <env>`, `lazure restart <env>`, `lazure scale <env>`, `lazure ports <env>`, and `lazure exec <env>` for day-two operations.",
+		"Use `lazure secrets ...` for SOPS and Key Vault-backed secrets, and `lazure vars ...` for plain environment variables.",
+		"`lazure config` documents the Container App mapping rules: managed fields, preserved external fields, ignored read-only fields, normalized Azure defaults, and unsupported live fields.",
+		"`lazure events --expand` and revealed secrets output may contain sensitive operational details; avoid pasting them into public logs.",
+	}
 }
 
 type cmdGroup struct {
@@ -529,12 +544,20 @@ func emitJSON(d Doc) error {
 
 func emitMarkdown(d Doc) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# %s — CLI reference for LLMs and AI agents\n\n", d.Name)
+	fmt.Fprintf(&b, "# %s — agent guide and CLI reference\n\n", d.Name)
 	if d.Usage != "" {
 		fmt.Fprintf(&b, "%s\n\n", d.Usage)
 	}
 	if d.Invocation != "" {
 		fmt.Fprintf(&b, "Invocation: `%s`\n\n", d.Invocation)
+	}
+	if len(d.AgentGuide) > 0 {
+		fmt.Fprintln(&b, "## Agent operating guide")
+		fmt.Fprintln(&b)
+		for _, n := range d.AgentGuide {
+			fmt.Fprintf(&b, "- %s\n", n)
+		}
+		fmt.Fprintln(&b)
 	}
 	for _, n := range d.Notes {
 		fmt.Fprintf(&b, "- %s\n", n)
@@ -647,9 +670,9 @@ func writeFlagMD(b *strings.Builder, f FlagDoc) {
 			continue
 		}
 		if len(n) == 1 {
-			prefixed = append(prefixed, "-"+n)
+			prefixed = append(prefixed, "`-"+n+"`")
 		} else {
-			prefixed = append(prefixed, "--"+n)
+			prefixed = append(prefixed, "`--"+n+"`")
 		}
 	}
 	line := strings.Join(prefixed, ", ")
@@ -665,5 +688,5 @@ func writeFlagMD(b *strings.Builder, f FlagDoc) {
 	if len(f.EnvVars) > 0 {
 		line += fmt.Sprintf(" [env: %s]", strings.Join(f.EnvVars, ", "))
 	}
-	fmt.Fprintf(b, "- `%s`\n", line)
+	fmt.Fprintf(b, "- %s\n", line)
 }

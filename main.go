@@ -459,20 +459,20 @@ Examples:
 
 			// Documentation
 			{
-				Name:  "llm",
-				Usage: "print full CLI reference in a format optimised for LLMs and AI agents",
+				Name:  "prime",
+				Usage: "print agent operating guidance and the full CLI reference",
 				Flags: []cli.Flag{
 					&cli.BoolFlag{Name: "json", Usage: "emit a structured JSON document instead of markdown"},
 				},
-				Action: cmd.Llm,
-				Description: `LLM prints the full Lazure command reference in a format that coding agents can read.
-Use it to give another tool accurate command names, flags, prerequisites, and dependencies.
+				Action: cmd.Prime,
+				Description: `Prime prints Lazure operating guidance and the full command reference for coding agents.
+Use it at the start of an agent session so the agent understands Lazure-managed workflows, command names, flags, prerequisites, and dependencies.
 
 Examples:
-  lazure llm                              print full reference (markdown) to stdout
-  lazure llm --json                       structured JSON for tool consumption
-  lazure llm > AGENTS.md                  capture markdown to a file
-  lazure llm --json | jq '.categories[].commands[].path'  list every command`,
+  lazure prime                            print agent guide + full reference (markdown)
+  lazure prime --json                     structured JSON for tool consumption
+  lazure prime >> AGENTS.md               append the guide to an agent instructions file
+  lazure prime --json | jq '.categories[].commands[].path'  list every command`,
 			},
 		},
 		EnableShellCompletion: true,
