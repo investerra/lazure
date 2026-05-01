@@ -125,6 +125,92 @@ func TestLoadVars_CLIOverridesWinOverEverything(t *testing.T) {
 	}
 }
 
+// ---------- shared vars.yml ----------
+
+func TestLoadVars_SharedFileIsOptional(t *testing.T) {
+	dir := setupProject(t)
+	vars, err := LoadVars(LoadOptions{ProjectDir: dir, Env: "dev"})
+	if err != nil {
+		t.Fatalf("missing shared vars.yml should not error: %v", err)
+	}
+	if vars["app_env"] != "dev" {
+		t.Errorf("std vars not preserved: %v", vars)
+	}
+}
+
+func TestLoadVars_SharedMergesUnderEnv(t *testing.T) {
+	dir := setupProject(t)
+	if err := os.WriteFile(filepath.Join(dir, SharedVarsFile), []byte("log_level: info\nshared_only: shared-value\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "envs", "dev.vars.yml"), []byte("log_level: debug\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vars, err := LoadVars(LoadOptions{ProjectDir: dir, Env: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vars["log_level"] != "debug" {
+		t.Errorf("env should win over shared: log_level = %v", vars["log_level"])
+	}
+	if vars["shared_only"] != "shared-value" {
+		t.Errorf("shared keys should propagate: shared_only = %v", vars["shared_only"])
+	}
+}
+
+func TestLoadVars_EnvFileCanReferenceShared(t *testing.T) {
+	dir := setupProject(t)
+	if err := os.WriteFile(filepath.Join(dir, SharedVarsFile), []byte("acr_server: investerra.azurecr.io\nservice_name: api\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	envContent := `docker_image: '{{ .Vars.acr_server }}/{{ .Vars.service_name }}:dev'`
+	if err := os.WriteFile(filepath.Join(dir, "envs", "dev.vars.yml"), []byte(envContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vars, err := LoadVars(LoadOptions{ProjectDir: dir, Env: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "investerra.azurecr.io/api:dev"
+	if vars["docker_image"] != want {
+		t.Errorf("docker_image = %v, want %v", vars["docker_image"], want)
+	}
+}
+
+func TestLoadVars_IntraFileLiteralsChainIntoDerivedKeys(t *testing.T) {
+	dir := setupProject(t)
+	shared := `acr_server: investerra.azurecr.io
+service_name: api-server
+docker_image: '{{ .Vars.acr_server }}/{{ .Vars.service_name }}:{{ .Vars.app_env }}'
+`
+	if err := os.WriteFile(filepath.Join(dir, SharedVarsFile), []byte(shared), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vars, err := LoadVars(LoadOptions{ProjectDir: dir, Env: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "investerra.azurecr.io/api-server:dev"
+	if vars["docker_image"] != want {
+		t.Errorf("docker_image = %v, want %v (intra-file chaining of literals into derived keys)", vars["docker_image"], want)
+	}
+}
+
+func TestLoadVars_SharedCanReferenceStdVars(t *testing.T) {
+	dir := setupProject(t)
+	shared := `tag_prefix: '{{ .Vars.app_env }}-'`
+	if err := os.WriteFile(filepath.Join(dir, SharedVarsFile), []byte(shared), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vars, err := LoadVars(LoadOptions{ProjectDir: dir, Env: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vars["tag_prefix"] != "dev-" {
+		t.Errorf("tag_prefix = %v, want dev-", vars["tag_prefix"])
+	}
+}
+
 func TestLoadVars_MissingVarsFileIsFine(t *testing.T) {
 	// Only secrets fixture — no vars.yml. Should load std vars without error.
 	dir := setupLoadProject(t, "", "")

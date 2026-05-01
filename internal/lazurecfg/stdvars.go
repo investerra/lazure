@@ -4,35 +4,39 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
-	"path/filepath"
 	"strings"
-
-	"github.com/investerra/lazure/internal/sopsio"
 )
 
 // StandardVars assembles the variables auto-injected into the template
 // rendering context: app_env, keyvault_url (from the SOPS metadata of the
-// env's secrets file), and git_branch / git_commit / git_short_commit /
-// git_dirty.
+// env's secrets file when present), and git_branch / git_commit /
+// git_short_commit / git_dirty.
 //
-// Returns an error only if the secrets file metadata cannot be read — that's
-// a hard stop because rendering needs the Key Vault URL. Git failures are
-// soft: a WARN log is emitted and all git_* vars are set to empty strings
-// (git_dirty to false) so templates using those vars still render.
+// All inputs are optional. A missing secrets file resolves keyvault_url
+// to an empty string — users who need the vault URL for templates can
+// override it via vars.yml, env vars file, or `--var keyvault_url=...`.
+// Commands that actually require a real Key Vault (secrets sync, deploy
+// when manifest references secrets) error at the use site, not at load.
+// Git failures are soft: WARN logged, git_* vars set to empty strings
+// so templates still render.
 //
 // If the working tree is dirty, git_short_commit carries a "-dirty" suffix
 // so downstream image tags surface the uncommitted state.
 func StandardVars(projectDir, env string) (map[string]any, error) {
 	vars := map[string]any{
-		"app_env": env,
+		"app_env":      env,
+		"keyvault_url": "",
 	}
 
-	secretsPath := filepath.Join(projectDir, "envs", env+".secrets.yml")
-	url, err := sopsio.VaultURL(secretsPath)
+	url, err := LoadVaultURL(LoadOptions{ProjectDir: projectDir, Env: env})
 	if err != nil {
 		return nil, fmt.Errorf("stdvars: %w", err)
 	}
 	vars["keyvault_url"] = url
+	if url == "" {
+		slog.Debug("stdvars: no secrets file; keyvault_url defaults to empty",
+			"dir", projectDir, "env", env)
+	}
 
 	addGitVars(vars, projectDir)
 	return vars, nil

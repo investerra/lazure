@@ -17,6 +17,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/investerra/lazure/internal/errs"
+	"github.com/investerra/lazure/internal/lazurecfg"
 	"github.com/investerra/lazure/internal/schema"
 )
 
@@ -249,6 +250,21 @@ func scaffoldProject(dir string, cfg initConfig, inf projectInferences) error {
 	if err := os.WriteFile(filepath.Join(dir, "deploy.schema.json"), schemaWithNewline(), 0o644); err != nil {
 		return err
 	}
+	// Scaffold the project-wide shared vars.yml only if absent — never
+	// overwrite content the user may have populated since a previous
+	// init run. Surface any other stat error (permissions, etc.)
+	// rather than silently skipping.
+	sharedVarsPath := filepath.Join(dir, lazurecfg.SharedVarsFile)
+	switch _, err := os.Stat(sharedVarsPath); {
+	case err == nil:
+		// already exists; leave alone.
+	case errors.Is(err, fs.ErrNotExist):
+		if err := os.WriteFile(sharedVarsPath, []byte(renderSharedVarsYml()), 0o644); err != nil {
+			return err
+		}
+	default:
+		return errs.Wrapf(err, "stat %s", sharedVarsPath)
+	}
 	for _, env := range cfg.Envs {
 		varsPath := filepath.Join(envsDir, env+".vars.yml")
 		body := renderVarsYml(env, cfg, inf.byEnv[env], inf.gitOrg)
@@ -257,6 +273,25 @@ func scaffoldProject(dir string, cfg initConfig, inf projectInferences) error {
 		}
 	}
 	return nil
+}
+
+// renderSharedVarsYml returns the scaffolded shared vars file: a
+// header explaining precedence + a worked example of derived keys
+// (acr_server, service_name, docker_image) that users can uncomment.
+// All real values stay commented out so an unmodified scaffold is a
+// no-op for `LoadVars` — the file is "active" only after editing.
+func renderSharedVarsYml() string {
+	return `# Project-wide vars shared across every environment.
+# Optional. Keys defined here are merged into the rendering context
+# AFTER std vars (app_env, git_*, keyvault_url) and BEFORE per-env
+# vars in envs/<env>.vars.yml — so per-env files can override and
+# reference values from this file.
+#
+# Example:
+#   acr_server: investerra.azurecr.io
+#   service_name: api-server
+#   docker_image: '{{ .Vars.acr_server }}/{{ .Vars.service_name }}:{{ .Vars.git_short_commit }}'
+`
 }
 
 // schemaWithNewline returns the embedded schema bytes with a trailing

@@ -2,10 +2,14 @@ package lazurecfg
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	"github.com/Masterminds/sprig/v3"
@@ -21,17 +25,27 @@ type LoadOptions struct {
 	CLIVars    map[string]string
 }
 
-// LoadVars assembles the final rendering-context Vars map:
+// SharedVarsFile is the conventional name for project-wide vars
+// shared across every environment. Lives next to deploy.yml. Optional.
+const SharedVarsFile = "vars.yml"
+
+// LoadVars assembles the final rendering-context Vars map by walking
+// layered sources, lowest precedence first:
 //
-//  1. Standard vars (app_env, keyvault_url, git_*) from StandardVars.
-//  2. If envs/{env}.vars.yml exists: render it as a Go template against
-//     the standard vars only, parse the YAML result, and merge on top.
-//  3. Apply CLI --var overrides on top of that.
+//  1. StandardVars: app_env, keyvault_url, git_*.
+//  2. <projectDir>/vars.yml (project-wide shared) — optional.
+//  3. <projectDir>/envs/<env>.vars.yml (per-env) — optional.
+//  4. CLIVars overrides.
 //
-// Vars-file keys override standard vars; CLI overrides win over everything.
-// User vars cannot reference other user vars through the template because
-// vars.yml is rendered before they exist in scope — only standard vars are
-// available at that point.
+// Each YAML layer is rendered as a Go template against the merged
+// vars from all earlier layers, so a key in the env file can reference
+// shared keys, shared keys can reference standard vars, and so on.
+// Within a single file, plain-literal keys (no `{{` in the value) are
+// also visible to templated keys in the same file via mergeVarsFile's
+// two-pass extract — see that function for the precise rules. Two
+// templated keys in the same file still cannot reference each other.
+//
+// Every file is optional: a missing layer is a no-op, not an error.
 func LoadVars(opts LoadOptions) (map[string]any, error) {
 	slog.Debug("lazurecfg: loading standard vars", "env", opts.Env, "dir", opts.ProjectDir)
 	vars, err := StandardVars(opts.ProjectDir, opts.Env)
@@ -43,27 +57,11 @@ func LoadVars(opts LoadOptions) (map[string]any, error) {
 		"keyvault_url", vars["keyvault_url"],
 		"git_commit", vars["git_commit"])
 
-	varsPath := filepath.Join(opts.ProjectDir, "envs", opts.Env+".vars.yml")
-	if _, err := os.Stat(varsPath); err == nil {
-		slog.Debug("lazurecfg: rendering vars file", "path", varsPath)
-		rendered, err := renderTemplate(varsPath, vars)
-		if err != nil {
-			return nil, err
-		}
-		userVars := map[string]any{}
-		if len(bytes.TrimSpace(rendered)) > 0 {
-			if err := yaml.Unmarshal(rendered, &userVars); err != nil {
-				return nil, fmt.Errorf("parse rendered %s: %w", varsPath, err)
-			}
-		}
-		slog.Debug("lazurecfg: user vars merged", "count", len(userVars))
-		for k, v := range userVars {
-			vars[k] = v
-		}
-	} else if !os.IsNotExist(err) {
-		return nil, fmt.Errorf("stat %s: %w", varsPath, err)
-	} else {
-		slog.Debug("lazurecfg: no vars.yml found, using standard vars only", "path", varsPath)
+	if err := mergeVarsFile(filepath.Join(opts.ProjectDir, SharedVarsFile), vars, "shared"); err != nil {
+		return nil, err
+	}
+	if err := mergeVarsFile(filepath.Join(opts.ProjectDir, "envs", opts.Env+".vars.yml"), vars, "env"); err != nil {
+		return nil, err
 	}
 
 	if len(opts.CLIVars) > 0 {
@@ -74,6 +72,85 @@ func LoadVars(opts LoadOptions) (map[string]any, error) {
 	}
 
 	return vars, nil
+}
+
+// mergeVarsFile renders path as a Go template against the current
+// vars map and merges the resulting YAML keys on top, mutating vars
+// in place. A missing file is a no-op; any other stat / parse /
+// template error is propagated. layer is a short label used in slog
+// lines so debugging "which file did I just merge" is easy.
+//
+// Two-pass intra-file resolution: keys with no `{{` in their value
+// (plain literals) are extracted from the raw YAML and merged into
+// vars BEFORE the template render, so a derived/templated key in the
+// same file can reference its sibling literals (e.g.
+// `docker_image: '{{ .Vars.acr_server }}/api:{{ .Vars.git_commit }}'`
+// next to `acr_server: investerra.azurecr.io`).
+//
+// Limitation: a templated key cannot reference another templated key
+// in the same file — that would require topological resolution. Move
+// the dependency to a literal, split into two files, or open an
+// issue if the limitation bites.
+func mergeVarsFile(path string, vars map[string]any, layer string) error {
+	switch _, err := os.Stat(path); {
+	case err == nil:
+		// fall through
+	case errors.Is(err, fs.ErrNotExist):
+		slog.Debug("lazurecfg: vars file absent", "layer", layer, "path", path)
+		return nil
+	default:
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+
+	if err := preMergeLiterals(path, vars); err != nil {
+		// Pass-1 parse failures are non-fatal — pass 2 (the real
+		// template render + parse) will surface the same error with
+		// better positioning. Just log.
+		slog.Debug("lazurecfg: pass-1 literal extract skipped", "layer", layer, "path", path, "err", err)
+	}
+
+	slog.Debug("lazurecfg: rendering vars file", "layer", layer, "path", path)
+	rendered, err := renderTemplate(path, vars)
+	if err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(rendered)) == 0 {
+		slog.Debug("lazurecfg: vars file rendered empty", "layer", layer, "path", path)
+		return nil
+	}
+	merged := map[string]any{}
+	if err := yaml.Unmarshal(rendered, &merged); err != nil {
+		return fmt.Errorf("parse rendered %s: %w", path, err)
+	}
+	maps.Copy(vars, merged)
+	slog.Debug("lazurecfg: vars file merged", "layer", layer, "path", path, "count", len(merged))
+	return nil
+}
+
+// preMergeLiterals reads the raw YAML at path (no template render)
+// and merges only the plain-literal entries into vars — i.e. values
+// whose string form contains no `{{` template marker. This is the
+// pass-1 helper for mergeVarsFile's intra-file chaining of literals
+// to derived keys.
+func preMergeLiterals(path string, vars map[string]any) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil
+	}
+	rawMap := map[string]any{}
+	if err := yaml.Unmarshal(raw, &rawMap); err != nil {
+		return fmt.Errorf("pass-1 parse %s: %w", path, err)
+	}
+	for k, v := range rawMap {
+		if s, ok := v.(string); ok && strings.Contains(s, "{{") {
+			continue
+		}
+		vars[k] = v
+	}
+	return nil
 }
 
 // LoadManifest renders deploy.yml with the full Vars set and unmarshals the

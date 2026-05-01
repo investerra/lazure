@@ -99,15 +99,21 @@ func TestStandardVars_NotAGitRepo(t *testing.T) {
 	}
 }
 
-func TestStandardVars_MissingSecrets(t *testing.T) {
+// Missing secrets file is no longer an error: keyvault_url just resolves
+// to "" so callers can still render templates and run validate / view
+// commands. Commands that genuinely need a vault (secrets sync, deploys
+// referencing secrets) error at use site.
+func TestStandardVars_MissingSecrets_ReturnsEmptyVaultURL(t *testing.T) {
 	dir := t.TempDir()
-	// No envs/ subdirectory.
-	_, err := StandardVars(dir, "dev")
-	if err == nil {
-		t.Fatal("expected error when secrets file missing")
+	vars, err := StandardVars(dir, "dev")
+	if err != nil {
+		t.Fatalf("missing secrets file should not error, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "stdvars") {
-		t.Errorf("error = %q, expected to be wrapped with 'stdvars'", err.Error())
+	if vars["keyvault_url"] != "" {
+		t.Errorf("keyvault_url = %v, want empty when secrets file is missing", vars["keyvault_url"])
+	}
+	if vars["app_env"] != "dev" {
+		t.Errorf("app_env = %v, want dev", vars["app_env"])
 	}
 }
 
