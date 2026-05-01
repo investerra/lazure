@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -18,7 +17,6 @@ import (
 	"github.com/investerra/lazure/internal/azurearm"
 	"github.com/investerra/lazure/internal/errs"
 	"github.com/investerra/lazure/internal/lazurecfg"
-	"github.com/investerra/lazure/internal/sopsio"
 	"github.com/investerra/lazure/internal/verify"
 )
 
@@ -88,9 +86,9 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 	}
 
 	// Cross-file secret reference check (no KV call — quick pre-flight).
+	// Effective secrets = shared (project-wide secrets.yml) ⊕ per-env.
 	slog.Debug("deploy: checking secret references")
-	encPath := filepath.Join(t.Dir, "envs", t.Env+".secrets.yml")
-	secrets, err := sopsio.Decrypt(encPath)
+	secrets, err := lazurecfg.LoadSecrets(lazurecfg.LoadOptions{ProjectDir: t.Dir, Env: t.Env})
 	if err != nil {
 		return errs.Usage(errs.Wrap(err, "deploy: decrypt secrets"))
 	}

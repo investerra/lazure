@@ -80,13 +80,46 @@ type envDiffRow struct {
 // we'd need to render per env, but that's an explicit "render"
 // command's job; env diff is a static-shape audit.
 func buildEnvDiff(ctx context.Context, dir string, envs []string) ([]envDiffRow, error) {
+	_ = ctx
 	type envState struct {
 		vars     map[string]any
 		sopsKeys map[string]struct{} // secret names defined in SOPS file
 	}
 	state := make(map[string]*envState, len(envs))
 
-	// Per-env vars + secrets.
+	// Project-wide shared vars + secrets — keys defined here appear in
+	// every env's effective set, so the matrix would mark them ✓ in
+	// every column. Filter them out the same way std vars are
+	// filtered, to keep signal density high.
+	sharedVars := map[string]struct{}{}
+	sharedVarsPath := filepath.Join(dir, lazurecfg.SharedVarsFile)
+	if raw, err := os.ReadFile(sharedVarsPath); err == nil {
+		var v map[string]any
+		if err := yaml.Unmarshal(raw, &v); err == nil {
+			for k := range v {
+				sharedVars[k] = struct{}{}
+			}
+		} else {
+			slog.Warn("env diff: shared vars parse failed", "err", err)
+		}
+	}
+	sharedSecretKeys := map[string]struct{}{}
+	sharedSecretsPath := lazurecfg.SharedSecretsPath(dir)
+	if _, err := os.Stat(sharedSecretsPath); err == nil {
+		shared, err := sopsio.Decrypt(sharedSecretsPath)
+		if err != nil {
+			slog.Warn("env diff: shared secrets decrypt failed", "err", err)
+		} else {
+			for k := range shared {
+				sharedSecretKeys[k] = struct{}{}
+			}
+		}
+	}
+
+	// Per-env vars + secrets (raw file reads — no template render, so
+	// env diff still works on projects whose templates can't render
+	// yet, exactly the asymmetry-spotting use case the command exists
+	// for).
 	for _, env := range envs {
 		es := &envState{}
 		state[env] = es
@@ -103,7 +136,7 @@ func buildEnvDiff(ctx context.Context, dir string, envs []string) ([]envDiffRow,
 			slog.Warn("env diff: vars.yml not found", "env", env, "path", varsPath)
 		}
 
-		secretsPath := filepath.Join(dir, "envs", env+".secrets.yml")
+		secretsPath := lazurecfg.EnvSecretsPath(dir, env)
 		if _, err := os.Stat(secretsPath); err == nil {
 			secrets, err := sopsio.Decrypt(secretsPath)
 			if err != nil {
@@ -137,29 +170,39 @@ func buildEnvDiff(ctx context.Context, dir string, envs []string) ([]envDiffRow,
 		slog.Warn("env diff: deploy.yml not found", "path", manifestPath)
 	}
 
-	// Build union of var keys across envs, ignoring std_vars (git_*,
-	// app_env, keyvault_url) which lazure injects automatically — they
-	// would otherwise show as ✓ in every column, pure noise.
+	// Build union of var keys across envs, ignoring std vars (auto-
+	// injected) AND shared vars (uniformly defined for every env via
+	// vars.yml). Both categories would show ✓ in every column — pure
+	// noise.
 	std := stdVarsSet()
 	allVars := map[string]struct{}{}
 	for _, env := range envs {
 		for k := range state[env].vars {
-			if _, isStd := std[k]; !isStd {
-				allVars[k] = struct{}{}
+			if _, isStd := std[k]; isStd {
+				continue
 			}
+			if _, isShared := sharedVars[k]; isShared {
+				continue
+			}
+			allVars[k] = struct{}{}
 		}
 	}
 
 	// Union of secret keys across (manifest refs ∪ every env's SOPS
-	// keys). Surfaces both "missing in this env" and "orphan in this
+	// keys), minus shared SOPS keys for the same noise-reduction
+	// reason. Surfaces both "missing in this env" and "orphan in this
 	// env" cases.
 	allSecrets := map[string]struct{}{}
 	for k := range manifestRefs {
-		allSecrets[k] = struct{}{}
+		if _, isShared := sharedSecretKeys[k]; !isShared {
+			allSecrets[k] = struct{}{}
+		}
 	}
 	for _, env := range envs {
 		for k := range state[env].sopsKeys {
-			allSecrets[k] = struct{}{}
+			if _, isShared := sharedSecretKeys[k]; !isShared {
+				allSecrets[k] = struct{}{}
+			}
 		}
 	}
 

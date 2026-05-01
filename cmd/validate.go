@@ -3,14 +3,12 @@ package cmd
 import (
 	"context"
 	"log/slog"
-	"path/filepath"
 
 	"github.com/urfave/cli/v3"
 
 	"github.com/investerra/lazure/internal/azurearm"
 	"github.com/investerra/lazure/internal/errs"
 	"github.com/investerra/lazure/internal/lazurecfg"
-	"github.com/investerra/lazure/internal/sopsio"
 	"github.com/investerra/lazure/internal/verify"
 )
 
@@ -47,10 +45,10 @@ func Validate(ctx context.Context, c *cli.Command) error {
 	}
 	slog.Debug("validate: structural ok")
 
-	// Cross-file secret refs. Decrypt is required to know which names
-	// SOPS provides; we're not calling KV here.
-	encPath := filepath.Join(dir, "envs", env+".secrets.yml")
-	secrets, err := sopsio.Decrypt(encPath)
+	// Cross-file secret refs. Effective secrets = shared (project-wide
+	// secrets.yml) ⊕ per-env, both optional. Either or both files
+	// missing is fine — verify will surface unresolved refs as errors.
+	secrets, err := lazurecfg.LoadSecrets(lazurecfg.LoadOptions{ProjectDir: dir, Env: env})
 	if err != nil {
 		return errs.Usage(errs.Wrap(err, "validate: decrypt secrets"))
 	}

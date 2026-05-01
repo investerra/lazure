@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -20,7 +21,6 @@ import (
 	"github.com/investerra/lazure/internal/azureapi"
 	"github.com/investerra/lazure/internal/errs"
 	"github.com/investerra/lazure/internal/lazurecfg"
-	"github.com/investerra/lazure/internal/sopsio"
 )
 
 // DoctorFlags are the flags for `lazure doctor`.
@@ -327,6 +327,11 @@ func runProjectChecksWithProgress(ctx context.Context, dir string, progress *doc
 	return sec
 }
 
+// projectPathChecks enumerates every file Lazure looks for and
+// reports its presence. Files marked statusSkip when absent are
+// intentionally optional (shared vars.yml, shared secrets.yml,
+// .sops.yaml, deploy.schema.json); deploy.yml absence fails because
+// Lazure has nothing to do without a manifest.
 func projectPathChecks(dir, manifestPath string, envs []string) []checkResult {
 	envsDir := filepath.Join(dir, "envs")
 	manifest := checkResult{status: statusPass, name: "manifest", detail: manifestPath}
@@ -340,18 +345,23 @@ func projectPathChecks(dir, manifestPath string, envs []string) []checkResult {
 	return []checkResult{
 		{status: statusPass, name: "project dir", detail: filepath.Clean(dir)},
 		manifest,
+		pathCheck("schema", filepath.Join(dir, "deploy.schema.json"), statusSkip),
+		pathCheck("shared vars", filepath.Join(dir, lazurecfg.SharedVarsFile), statusSkip),
+		pathCheck("shared secrets", lazurecfg.SharedSecretsPath(dir), statusSkip),
 		pathCheck("envs dir", envsDir, statusWarn),
 		envList,
-		pathCheck("sops config", sopsConfigPath(dir), statusWarn),
-		pathCheck("schema", filepath.Join(dir, "deploy.schema.json"), statusWarn),
+		pathCheck("sops config", sopsConfigPath(dir), statusSkip),
 	}
 }
 
+// pathCheck reports a file's presence. When absent, status is set to
+// missingStatus and detail begins with "absent:" so the renderer can
+// distinguish "not configured / OK" from "configured but broken".
 func pathCheck(name, path string, missingStatus checkStatus) checkResult {
 	if _, err := os.Stat(path); err == nil {
 		return checkResult{status: statusPass, name: name, detail: path}
 	}
-	return checkResult{status: missingStatus, name: name, detail: "not found at " + path}
+	return checkResult{status: missingStatus, name: name, detail: "absent: " + path}
 }
 
 // findManifest returns the path to deploy.yml if present, falling back
@@ -415,27 +425,33 @@ func checkEnvWithProgress(ctx context.Context, dir, env string, progress *doctor
 		return ec
 	}
 
+	// Vars + secrets files are optional. Absent is a soft skip — only
+	// a real syntax / decrypt error fails the env.
 	varsPath := filepath.Join(dir, "envs", env+".vars.yml")
 	progress.Set("checking " + env + " vars")
 	if _, err := os.Stat(varsPath); err != nil {
-		marks["vars"] = "fail"
-		return fail("vars file", err.Error())
+		if errors.Is(err, fs.ErrNotExist) {
+			marks["vars"] = "skip"
+		} else {
+			marks["vars"] = "fail"
+			return fail("vars file", err.Error())
+		}
+	} else {
+		marks["vars"] = "pass"
 	}
-	marks["vars"] = "pass"
 
-	secretsPath := filepath.Join(dir, "envs", env+".secrets.yml")
 	progress.Set("checking " + env + " secrets")
-	if _, err := os.Stat(secretsPath); err != nil {
-		marks["secrets decrypt"] = "fail"
-		return fail("secrets file", err.Error())
-	}
-
 	progress.Set("decrypting " + env + " secrets")
-	if _, err := sopsio.Decrypt(secretsPath); err != nil {
+	secrets, err := lazurecfg.LoadSecrets(lazurecfg.LoadOptions{ProjectDir: dir, Env: env})
+	if err != nil {
 		marks["secrets decrypt"] = "fail"
 		return fail("sops decrypt", err.Error())
 	}
-	marks["secrets decrypt"] = "pass"
+	if len(secrets) == 0 {
+		marks["secrets decrypt"] = "skip"
+	} else {
+		marks["secrets decrypt"] = "pass"
+	}
 
 	progress.Set("rendering " + env + " manifest")
 	manifest, _, err := lazurecfg.LoadManifest(lazurecfg.LoadOptions{ProjectDir: dir, Env: env})
@@ -466,17 +482,22 @@ func checkEnvWithProgress(ctx context.Context, dir, env string, progress *doctor
 	marks["sub reachable"] = "pass"
 
 	progress.Set("checking " + env + " key vault")
-	vaultURL, err := sopsio.VaultURL(secretsPath)
+	vaultURL, err := lazurecfg.LoadVaultURL(lazurecfg.LoadOptions{ProjectDir: dir, Env: env})
 	if err != nil {
 		marks["KV reachable"] = "fail"
 		return fail("sops vault url", err.Error())
 	}
-	kv := azureapi.NewKeyVaultClient(vaultURL, tp)
-	if _, err := kv.ListSecrets(ctx); err != nil {
-		marks["KV reachable"] = "fail"
-		return fail("kv list", err.Error())
+	if vaultURL == "" {
+		// No secrets file → no Key Vault to reach. Skip rather than fail.
+		marks["KV reachable"] = "skip"
+	} else {
+		kv := azureapi.NewKeyVaultClient(vaultURL, tp)
+		if _, err := kv.ListSecrets(ctx); err != nil {
+			marks["KV reachable"] = "fail"
+			return fail("kv list", err.Error())
+		}
+		marks["KV reachable"] = "pass"
 	}
-	marks["KV reachable"] = "pass"
 
 	ec.overall = joinMarks(order, marks)
 	ec.stages = envStages(marks)
@@ -588,8 +609,11 @@ func sectionTitle(name string) string {
 }
 
 func renderCheckList(b *strings.Builder, results []checkResult, color bool) {
+	// Width chosen to comfortably fit the longest project-check name
+	// ("shared secrets" = 14 chars). Smaller widths cause the path
+	// column to drift on those rows because tabwriter isn't used here.
 	for _, r := range results {
-		fmt.Fprintf(b, "  %-4s  %-12s  %s\n",
+		fmt.Fprintf(b, "  %-4s  %-16s  %s\n",
 			statusWord(r.status, color),
 			r.name,
 			colorize(r.detail, styleForStatus(r.status), color))
@@ -614,17 +638,22 @@ func stageWord(ec envCheck, stage string, color bool) string {
 	return statusWord(ec.stages[stage], color)
 }
 
+// doctorFindings collects only actionable diagnostics (warnings and
+// failures). SKIP entries are intentionally optional state — listing
+// them would conflate "no .sops.yaml configured" with "your .sops.yaml
+// is broken" and bury real signal under absent-but-OK rows.
 func doctorFindings(sections []section) []string {
 	var out []string
 	for _, sec := range sections {
 		name := sectionTitle(sec.name)
 		for _, r := range sec.results {
-			if r.status != statusPass {
+			switch r.status {
+			case statusFail, statusWarn:
 				out = append(out, fmt.Sprintf("%s / %s: %s", name, r.name, r.detail))
 			}
 		}
 		for _, ec := range sec.envChecks {
-			if ec.status != statusPass && ec.failMsg != "" {
+			if ec.status == statusFail && ec.failMsg != "" {
 				out = append(out, fmt.Sprintf("env %s: %s", ec.env, compactFinding(ec.failMsg)))
 			}
 		}

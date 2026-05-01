@@ -11,7 +11,6 @@ import (
 
 	"github.com/investerra/lazure/internal/errs"
 	"github.com/investerra/lazure/internal/lazurecfg"
-	"github.com/investerra/lazure/internal/sopsio"
 )
 
 // SecretsExport implements `lazure secrets export <env>`. Emits
@@ -25,18 +24,19 @@ import (
 // Variables defined in deploy.yml as plain strings are skipped
 // here — use `lazure vars export` for those.
 func SecretsExport(ctx context.Context, c *cli.Command) error {
-	env, encPath, err := secretsEnvPath(c)
-	if err != nil {
-		return err
+	env := c.StringArg("env")
+	if env == "" {
+		return errs.Usage(errs.New("env argument is required (e.g. 'lazure secrets export dev')"))
 	}
 	containerName := c.String("container")
+	dir := c.String("dir")
 	slog.Debug("secrets export: start", "env", env, "container", containerName)
 
-	manifest, _, err := lazurecfg.LoadManifest(lazurecfg.LoadOptions{ProjectDir: c.String("dir"), Env: env})
+	manifest, _, err := lazurecfg.LoadManifest(lazurecfg.LoadOptions{ProjectDir: dir, Env: env})
 	if err != nil {
 		return errs.Usage(errs.Wrap(err, "secrets export: load manifest"))
 	}
-	secrets, err := sopsio.Decrypt(encPath)
+	secrets, err := lazurecfg.LoadSecrets(lazurecfg.LoadOptions{ProjectDir: dir, Env: env})
 	if err != nil {
 		return errs.Usage(errs.Wrap(err, "secrets export: decrypt"))
 	}
