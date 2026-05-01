@@ -102,9 +102,10 @@ var commandCategory = map[string]string{
 
 	"secrets": "Config surface",
 	"vars":    "Config surface",
+	"config":  "Config surface",
 
-	"config": "Documentation",
-	"prime":  "Documentation",
+	"rules": "Documentation",
+	"prime": "Documentation",
 }
 
 var categoryOrder = []string{
@@ -278,7 +279,7 @@ var commandMetadata = map[string]commandMeta{
 	"lazure schema": {
 		useCase: "emit the JSON Schema for deploy.yml so editors/CI can validate it.",
 	},
-	"lazure config": {
+	"lazure rules": {
 		useCase: "inspect Lazure's Container App field ownership rules: managed fields, preserved external fields, ignored/read-only fields, normalized Azure defaults, and unsupported live fields that block deploy.",
 	},
 
@@ -289,7 +290,7 @@ var commandMetadata = map[string]commandMeta{
 		dependencies:  []string{depSops},
 	},
 	"lazure secrets new": {
-		useCase:       "create an empty encrypted secrets file for a new environment.",
+		useCase:       "create an empty encrypted secrets file for a new environment. The reserved env name `shared` creates the project-wide secrets.yml at the deploy directory root.",
 		prerequisites: []string{prereqSops},
 		dependencies:  []string{depSops},
 	},
@@ -336,7 +337,7 @@ var commandMetadata = map[string]commandMeta{
 		prerequisites: []string{prereqManifest},
 	},
 	"lazure vars edit": {
-		useCase:       "open the plaintext envs/<env>.vars.yml in `$EDITOR` (creates a stub if missing).",
+		useCase:       "open the plaintext envs/<env>.vars.yml in `$EDITOR` (creates a stub if missing). The reserved env name `shared` opens the project-wide vars.yml at the deploy directory root.",
 		prerequisites: []string{prereqEditor},
 	},
 	"lazure vars verify": {
@@ -346,6 +347,48 @@ var commandMetadata = map[string]commandMeta{
 	"lazure vars export": {
 		useCase:       "print plain-string env vars from deploy.yml as `export KEY=VAL` lines.",
 		prerequisites: []string{prereqManifest},
+	},
+	"lazure config": {
+		useCase: "view the resolved env block (vars + secrets) a container will see at runtime; secrets are redacted by default.",
+	},
+	"lazure config view": {
+		useCase:       "print the resolved env (vars + secrets) as a kv grid; secrets redacted unless `--reveal`.",
+		prerequisites: []string{prereqManifest, prereqSops},
+		dependencies:  []string{depSops},
+	},
+	"lazure config export": {
+		useCase:       "emit the resolved env as `export KEY=VAL` lines for `eval` in a shell. Secrets emit as `'*'` unless `--reveal` is set.",
+		prerequisites: []string{prereqManifest, prereqSops},
+		dependencies:  []string{depSops},
+	},
+	"lazure config dotenv": {
+		useCase:       "emit the resolved env in godotenv-compatible `KEY=VAL` form for writing to a `.env` file.",
+		prerequisites: []string{prereqManifest, prereqSops},
+		dependencies:  []string{depSops},
+	},
+	"lazure config json": {
+		useCase:       "emit the resolved env as a flat JSON object (eval-friendly for tooling).",
+		prerequisites: []string{prereqManifest, prereqSops},
+		dependencies:  []string{depSops},
+	},
+	"lazure config keys": {
+		useCase:       "print just the env-var names a container will see (one per line).",
+		prerequisites: []string{prereqManifest},
+	},
+	"lazure config get": {
+		useCase:       "print one resolved value by env-var name; exits non-zero if the key is missing.",
+		prerequisites: []string{prereqManifest, prereqSops},
+		dependencies:  []string{depSops},
+	},
+	"lazure config diff": {
+		useCase:       "compare the resolved env block between two environments side-by-side.",
+		prerequisites: []string{prereqManifest, prereqSops},
+		dependencies:  []string{depSops},
+	},
+	"lazure config verify": {
+		useCase:       "single-shot pre-deploy gate: validate the manifest AND confirm every secret ref resolves in SOPS (and optionally in Key Vault). Combines `vars verify` and `secrets verify` over the unified config surface.",
+		prerequisites: []string{prereqManifest, prereqSops, "With `--check-kv`: " + prereqAzureAuth},
+		dependencies:  []string{depSops, "With `--check-kv`: " + depAzureARM},
 	},
 
 	// ---------- Documentation ----------
@@ -404,8 +447,10 @@ func agentGuide() []string {
 		"After deploy or runtime failures, inspect `lazure events <env> --expand` and `lazure logs <env> --tail 20`; use `--since` when you need only recent diagnostics.",
 		"Use `lazure status <env>`, `lazure revisions <env>`, `lazure rollback <env>`, `lazure restart <env>`, `lazure scale <env>`, `lazure ports <env>`, and `lazure exec <env>` for day-two operations.",
 		"Use `lazure secrets ...` for SOPS and Key Vault-backed secrets, and `lazure vars ...` for plain environment variables.",
+		"Vars and secrets are layered: project-wide `vars.yml` / `secrets.yml` at the deploy directory root (optional, shared across envs) merge UNDER per-env `envs/<env>.vars.yml` / `envs/<env>.secrets.yml` (also optional). Per-env wins on conflict. Edit the shared files via `lazure vars edit shared` / `lazure secrets edit shared`.",
 		"In GitHub Actions, install the released binary with `actions/install` first; task actions such as `actions/env_guess`, `actions/validate`, `actions/sync_secrets`, `actions/deploy`, and `actions/wait_for_deploy` assume `lazure` is already on PATH.",
-		"`lazure config` documents the Container App mapping rules: managed fields, preserved external fields, ignored read-only fields, normalized Azure defaults, and unsupported live fields.",
+		"`lazure config <subcommand> <env>` shows the resolved env block (vars + secrets) the container will see; secrets are redacted unless `--reveal` is passed.",
+		"`lazure rules` documents the Container App mapping rules: managed fields, preserved external fields, ignored read-only fields, normalized Azure defaults, and unsupported live fields.",
 		"`lazure events --expand` and revealed secrets output may contain sensitive operational details; avoid pasting them into public logs.",
 	}
 }

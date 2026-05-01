@@ -141,16 +141,6 @@ func newApp() *cli.Command {
 		Commands: []*cli.Command{
 			// Deploy pipeline
 			{
-				Name:   "config",
-				Usage:  "print Container App field mapping rules as YAML",
-				Action: cmd.Config,
-				Description: `Config prints Lazure's Container App ownership rules in YAML.
-Use it to see which Azure fields deploy manages, preserves, ignores, normalizes, or rejects.
-
-Examples:
-  lazure config                          print field ownership mapping rules`,
-			},
-			{
 				Name:          "deploy",
 				Usage:         "deploy to an environment",
 				Arguments:     envArg(),
@@ -488,8 +478,19 @@ Examples:
 			// Config surface
 			cmd.SecretsCommand(),
 			cmd.VarsCommand(),
+			cmd.ConfigCommand(),
 
 			// Documentation
+			{
+				Name:   "rules",
+				Usage:  "print Container App field mapping rules as YAML",
+				Action: cmd.Rules,
+				Description: `Rules prints Lazure's Container App ownership rules in YAML.
+Use it to see which Azure fields deploy manages, preserves, ignores, normalizes, or rejects.
+
+Examples:
+  lazure rules                            print field ownership mapping rules`,
+			},
 			{
 				Name:  "prime",
 				Usage: "print agent operating guidance and the full CLI reference",
