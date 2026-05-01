@@ -527,6 +527,9 @@ func SecretsVerify(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		return err
 	}
+	if env == SharedEnvName {
+		return errs.Usage(errs.New("secrets verify: 'shared' is not a valid env for verify (the shared secrets.yml is checked as part of any real env's verify — run e.g. 'lazure secrets verify dev')"))
+	}
 	dir := c.String("dir")
 	checkKV := c.Bool("check-kv")
 	slog.Debug("secrets verify: start", "env", env, "dir", dir, "check_kv", checkKV)
@@ -678,15 +681,27 @@ func syncUpsert(ctx context.Context, kv *azureapi.KeyVaultClient, secrets map[st
 
 // ---------- helpers ----------
 
+// SharedEnvName is the reserved env argument that targets the
+// project-wide shared file (vars.yml / secrets.yml at project root)
+// instead of a per-env file. `lazure secrets edit shared` and
+// `lazure vars edit shared` both honor it.
+const SharedEnvName = "shared"
+
 // secretsEnvPath validates the positional env arg and returns the path
-// to the encrypted secrets file for that env.
+// to the encrypted secrets file for that env. The reserved name
+// SharedEnvName ("shared") resolves to the project-wide
+// <dir>/secrets.yml so the same secrets subcommands can manage shared
+// content too.
 func secretsEnvPath(c *cli.Command) (string, string, error) {
 	env := c.StringArg("env")
 	if env == "" {
-		return "", "", errs.Usage(errs.New("env argument is required (e.g. 'lazure secrets view dev')"))
+		return "", "", errs.Usage(errs.New("env argument is required (e.g. 'lazure secrets view dev', or 'shared' for the project-wide file)"))
 	}
 	dir := c.String("dir")
-	return env, filepath.Join(dir, "envs", env+".secrets.yml"), nil
+	if env == SharedEnvName {
+		return env, lazurecfg.SharedSecretsPath(dir), nil
+	}
+	return env, lazurecfg.EnvSecretsPath(dir, env), nil
 }
 
 // promptConfirm prints a [y/N] prompt to stdout and reads stdin.

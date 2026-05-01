@@ -137,16 +137,21 @@ func printVarsJSON(vars map[string]any) error {
 
 // VarsEdit implements `lazure vars edit <env>`. Opens the plaintext
 // vars file in $EDITOR. If the file doesn't exist, creates a stub
-// (so `lazure vars edit newenv` just works). After editing, attempts
-// to load the file to catch YAML/template syntax errors and surface
-// them before the user moves on.
+// (so `lazure vars edit newenv` just works). The reserved env name
+// "shared" targets the project-wide <dir>/vars.yml instead of a
+// per-env file. After editing, attempts to load the file to catch
+// YAML/template syntax errors and surface them before the user moves
+// on.
 func VarsEdit(ctx context.Context, c *cli.Command) error {
 	env := c.StringArg("env")
 	if env == "" {
-		return errs.Usage(errs.New("vars edit: env argument is required"))
+		return errs.Usage(errs.New("vars edit: env argument is required (or 'shared' for the project-wide file)"))
 	}
 	dir := c.String("dir")
 	varsPath := filepath.Join(dir, "envs", env+".vars.yml")
+	if env == SharedEnvName {
+		varsPath = filepath.Join(dir, lazurecfg.SharedVarsFile)
+	}
 	slog.Debug("vars edit: start", "env", env, "path", varsPath)
 
 	editor := os.Getenv("EDITOR")
@@ -195,6 +200,9 @@ func VarsVerify(ctx context.Context, c *cli.Command) error {
 	env := c.StringArg("env")
 	if env == "" {
 		return errs.Usage(errs.New("vars verify: env argument is required"))
+	}
+	if env == SharedEnvName {
+		return errs.Usage(errs.New("vars verify: 'shared' is not a valid env for verify (the shared vars.yml is verified as part of any real env's load — run e.g. 'lazure vars verify dev')"))
 	}
 	dir := c.String("dir")
 	slog.Debug("vars verify: start", "env", env, "dir", dir)
