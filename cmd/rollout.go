@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"regexp"
-	"sort"
-	"strconv"
 	"strings"
+	"time"
 
 	"github.com/urfave/cli/v3"
 
@@ -19,13 +17,10 @@ import (
 func RolloutFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.BoolFlag{Name: "no-build", Usage: "skip docker build and push"},
-		&cli.BoolFlag{Name: "no-tag", Usage: "skip creating the semver git tag"},
+		&cli.BoolFlag{Name: "no-tag", Usage: "skip creating the calver git tag"},
 		&cli.BoolFlag{Name: "no-push", Usage: "skip pushing branch and tag to origin"},
 		&cli.BoolFlag{Name: "no-secret-sync", Usage: "skip syncing SOPS secrets to Key Vault"},
 		&cli.BoolFlag{Name: "no-version-wait", Usage: "skip public /version verification after deploy"},
-		&cli.BoolFlag{Name: "major", Usage: "bump major version"},
-		&cli.BoolFlag{Name: "minor", Usage: "bump minor version (default)"},
-		&cli.BoolFlag{Name: "patch", Usage: "bump patch version"},
 		&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "skip the confirmation prompt"},
 		&cli.BoolFlag{Name: "dry-run", Usage: "print the rollout plan without changing anything"},
 	}
@@ -45,11 +40,7 @@ func Rollout(ctx context.Context, c *cli.Command) error {
 	noSecretSync := c.Bool("no-secret-sync")
 	noVersionWait := c.Bool("no-version-wait")
 
-	bump, err := rolloutBumpFromFlags(c.Bool("major"), c.Bool("minor"), c.Bool("patch"))
-	if err != nil {
-		return errs.Usage(err)
-	}
-	slog.Debug("rollout: start", "env", env, "dir", dir, "bump", bump.String(),
+	slog.Debug("rollout: start", "env", env, "dir", dir,
 		"no_build", noBuild, "no_tag", noTag, "no_push", noPush, "no_secret_sync", noSecretSync)
 
 	if out, err := gitRun(ctx, "status", "--porcelain"); err != nil {
@@ -81,11 +72,11 @@ func Rollout(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		return errs.System(errs.Wrap(err, "rollout: list tags"))
 	}
-	nextTag, err := nextSemverTag(tags, bump)
+	nextTag := computeNextTag(time.Now().UTC(), tags)
+	baseTag, err := describeLatestTag(ctx)
 	if err != nil {
-		return errs.Usage(err)
+		return errs.System(errs.Wrap(err, "rollout: describe base tag"))
 	}
-	baseTag := latestSemverTag(tags)
 	changelog, err := buildChangelog(ctx, baseTag)
 	if err != nil {
 		return errs.System(errs.Wrap(err, "rollout: changelog"))
@@ -122,7 +113,7 @@ func Rollout(ctx context.Context, c *cli.Command) error {
 	}
 
 	if !noSecretSync {
-		if err := runSelf(ctx, "--dir", dir, "secrets", "sync", env, "-y"); err != nil {
+		if err := runSecretsSync(ctx, dir, env); err != nil {
 			return errs.System(errs.Wrap(err, "rollout: secrets sync"))
 		}
 	}
@@ -158,114 +149,6 @@ func Rollout(ctx context.Context, c *cli.Command) error {
 	return nil
 }
 
-type rolloutBump int
-
-const (
-	rolloutBumpMajor rolloutBump = iota
-	rolloutBumpMinor
-	rolloutBumpPatch
-)
-
-func (b rolloutBump) String() string {
-	switch b {
-	case rolloutBumpMajor:
-		return "major"
-	case rolloutBumpPatch:
-		return "patch"
-	default:
-		return "minor"
-	}
-}
-
-func rolloutBumpFromFlags(major, minor, patch bool) (rolloutBump, error) {
-	count := 0
-	for _, v := range []bool{major, minor, patch} {
-		if v {
-			count++
-		}
-	}
-	if count > 1 {
-		return rolloutBumpMinor, errs.New("rollout: choose only one of --major, --minor, --patch")
-	}
-	switch {
-	case major:
-		return rolloutBumpMajor, nil
-	case patch:
-		return rolloutBumpPatch, nil
-	default:
-		return rolloutBumpMinor, nil
-	}
-}
-
-var semverTagRE = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)$`)
-
-type semverTag struct {
-	name                string
-	major, minor, patch int
-}
-
-func nextSemverTag(tags []string, bump rolloutBump) (string, error) {
-	latest, ok := latestSemver(tags)
-	if !ok {
-		switch bump {
-		case rolloutBumpMajor:
-			return "v1.0.0", nil
-		case rolloutBumpPatch:
-			return "v0.0.1", nil
-		default:
-			return "v0.1.0", nil
-		}
-	}
-	switch bump {
-	case rolloutBumpMajor:
-		latest.major++
-		latest.minor = 0
-		latest.patch = 0
-	case rolloutBumpPatch:
-		latest.patch++
-	default:
-		latest.minor++
-		latest.patch = 0
-	}
-	return fmt.Sprintf("v%d.%d.%d", latest.major, latest.minor, latest.patch), nil
-}
-
-func latestSemverTag(tags []string) string {
-	latest, ok := latestSemver(tags)
-	if !ok {
-		return ""
-	}
-	return latest.name
-}
-
-func latestSemver(tags []string) (semverTag, bool) {
-	var versions []semverTag
-	for _, tag := range tags {
-		m := semverTagRE.FindStringSubmatch(strings.TrimSpace(tag))
-		if m == nil {
-			continue
-		}
-		major, _ := strconv.Atoi(m[1])
-		minor, _ := strconv.Atoi(m[2])
-		patch, _ := strconv.Atoi(m[3])
-		versions = append(versions, semverTag{name: tag, major: major, minor: minor, patch: patch})
-	}
-	if len(versions) == 0 {
-		return semverTag{}, false
-	}
-	sort.Slice(versions, func(i, j int) bool {
-		a, b := versions[i], versions[j]
-		if a.major != b.major {
-			return a.major > b.major
-		}
-		if a.minor != b.minor {
-			return a.minor > b.minor
-		}
-		return a.patch > b.patch
-	})
-	return versions[0], true
-}
-
 func rolloutCleanTreeError(status string) error {
 	if strings.TrimSpace(status) == "" {
 		return nil
@@ -290,7 +173,7 @@ func renderRolloutPreview(p rolloutPlan) string {
 		b.WriteString("  tag:      " + p.Tag + "\n")
 	}
 	if p.BaseTag == "" {
-		b.WriteString("  since:    (first rollout — no prior semver tag)\n")
+		b.WriteString("  since:    (first rollout — no prior calver tag)\n")
 	} else {
 		b.WriteString("  since:    " + p.BaseTag + "\n")
 	}
@@ -310,6 +193,13 @@ func enabledWord(v bool) string {
 		return "yes"
 	}
 	return "no"
+}
+
+// runSecretsSync invokes `lazure secrets sync <env> -y` as a child
+// process, the way both `rollout` and `deploy --sync` do it. Centralized
+// so the args list stays in one place.
+func runSecretsSync(ctx context.Context, dir, env string) error {
+	return runSelf(ctx, "--dir", dir, "secrets", "sync", env, "-y")
 }
 
 func runSelf(ctx context.Context, args ...string) error {

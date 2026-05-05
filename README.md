@@ -139,7 +139,7 @@ lazure rollback dev                  # back to the previous revision
 lazure config diff dev uat           # compare envs side-by-side
 ```
 
-For a production release with the full pipeline (semver tag → build → push → secrets sync → deploy → verify):
+For a production release with the full pipeline (calver tag → build → push → secrets sync → deploy → verify):
 
 ```sh
 lazure rollout prd -y

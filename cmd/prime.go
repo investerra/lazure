@@ -143,7 +143,7 @@ var (
 var commandMetadata = map[string]commandMeta{
 	// ---------- Deploy pipeline ----------
 	"lazure deploy": {
-		useCase: "roll out an image to a target environment. By default the image must already exist in ACR; use `--build` to build and push first, `--env KEY=VALUE` for one-off runtime env vars, and `--force` to create a fresh revision even when the template would otherwise be unchanged.",
+		useCase: "roll out an image to a target environment. By default the image must already exist in ACR; use `--build` to build and push first, `--sync` to push SOPS secrets to Key Vault before deploying, `--env KEY=VALUE` for one-off runtime env vars, and `--force` to create a fresh revision even when the template would otherwise be unchanged.",
 		prerequisites: []string{
 			prereqAzureAuth,
 			prereqManifest,
@@ -171,7 +171,7 @@ var commandMetadata = map[string]commandMeta{
 		dependencies: []string{depDocker},
 	},
 	"lazure rollout": {
-		useCase: "ship the current clean git commit end to end: semver tag, image build/push, secrets sync, git push, deploy, and public version verification.",
+		useCase: "ship the current clean git commit end to end: calver tag (`vYYYYMMDD.N`), image build/push, secrets sync, git push, deploy, and public version verification.",
 		prerequisites: []string{
 			"Git working tree must be completely clean; rollout never commits or stages files.",
 			prereqAzureAuth,
@@ -357,7 +357,7 @@ var commandMetadata = map[string]commandMeta{
 		dependencies:  []string{depSops},
 	},
 	"lazure config export": {
-		useCase:       "emit the resolved env as `export KEY=VAL` lines for `eval` in a shell. Secrets emit as `'*'` unless `--reveal` is set.",
+		useCase:       "emit the resolved env as `export KEY=VAL` lines for `eval` in a shell. Secrets emit as `'*'` unless `--reveal` is set. Pass `--match <regex>` (RE2, unanchored) to limit output to keys whose names match.",
 		prerequisites: []string{prereqManifest, prereqSops},
 		dependencies:  []string{depSops},
 	},

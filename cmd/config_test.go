@@ -384,6 +384,74 @@ func TestConfigExport_VarsOnly_EndToEnd(t *testing.T) {
 	}
 }
 
+func TestConfigExport_Match(t *testing.T) {
+	cases := []struct {
+		name            string
+		match           string
+		wantContains    []string
+		wantNotContains []string
+		wantEmpty       bool
+		wantErrContains string
+	}{
+		{
+			name:            "anchored prefix",
+			match:           "^LOG_",
+			wantContains:    []string{"export LOG_LEVEL='info'"},
+			wantNotContains: []string{"APP_NAME"},
+		},
+		{
+			name:            "unanchored substring",
+			match:           "NAME",
+			wantContains:    []string{"APP_NAME"},
+			wantNotContains: []string{"LOG_LEVEL"},
+		},
+		{
+			name:      "no hits emits nothing",
+			match:     "^NOPE_",
+			wantEmpty: true,
+		},
+		{
+			name:            "invalid regex",
+			match:           "[unclosed",
+			wantErrContains: "invalid --match",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := setupConfigProjectMulti(t)
+			out, err := runConfigSubcommand(t, dir, "export", []string{"dev"}, map[string]string{
+				"only":  "vars",
+				"match": tc.match,
+			})
+			if tc.wantErrContains != "" {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				if !strings.Contains(err.Error(), tc.wantErrContains) {
+					t.Errorf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("run failed: %v\nstdout:\n%s", err, out)
+			}
+			if tc.wantEmpty && strings.TrimSpace(out) != "" {
+				t.Errorf("expected empty output, got:\n%s", out)
+			}
+			for _, want := range tc.wantContains {
+				if !strings.Contains(out, want) {
+					t.Errorf("missing %q in output:\n%s", want, out)
+				}
+			}
+			for _, leaked := range tc.wantNotContains {
+				if strings.Contains(out, leaked) {
+					t.Errorf("unexpected %q in output:\n%s", leaked, out)
+				}
+			}
+		})
+	}
+}
+
 func TestConfigGet_PlainVar_EndToEnd(t *testing.T) {
 	dir := setupConfigProject(t)
 	out, err := runConfigSubcommand(t, dir, "get", []string{"dev", "LOG_LEVEL"}, nil)
@@ -472,7 +540,7 @@ sops:
     version: 3.12.2
 `
 
-const configTestManifest = `
+const configTestManifestSingle = `
 app:
   name: api-server
   location: switzerlandnorth
@@ -490,11 +558,44 @@ containers:
     resources: { cpu: 0.5, memory: 1Gi }
 `
 
+const configTestManifestMulti = `
+app:
+  name: api-server
+  location: switzerlandnorth
+  resource_group: dev-rg
+  managed_environment_id: /subs/x/managedEnvironments/y
+  identity: /subs/x/rg/y/identities/z
+
+env:
+  LOG_LEVEL: "{{ .Vars.log_level }}"
+  APP_NAME: "{{ .Vars.app_name }}"
+  REGION: "{{ .Vars.region }}"
+  API_KEY: { secret: nexus-database-url }
+
+containers:
+  - name: app
+    image: acr.io/app:v1
+    resources: { cpu: 0.5, memory: 1Gi }
+`
+
 // setupConfigProject builds a minimal project with a manifest that has
 // one plain env var and one secret ref. The SOPS metadata is parseable
 // so LoadManifest succeeds without keys; we only exercise paths that
 // don't decrypt.
 func setupConfigProject(t *testing.T) string {
+	t.Helper()
+	return writeConfigProject(t, "log_level: info\n", configTestManifestSingle)
+}
+
+// setupConfigProjectMulti is like setupConfigProject but with multiple
+// plain vars so regex/match filters have something to discriminate on.
+func setupConfigProjectMulti(t *testing.T) string {
+	t.Helper()
+	vars := "log_level: info\napp_name: nexus\nregion: switzerlandnorth\n"
+	return writeConfigProject(t, vars, configTestManifestMulti)
+}
+
+func writeConfigProject(t *testing.T, vars, manifest string) string {
 	t.Helper()
 	dir := t.TempDir()
 	envsDir := filepath.Join(dir, "envs")
@@ -504,10 +605,10 @@ func setupConfigProject(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(envsDir, "dev.secrets.yml"), []byte(configTestSOPSFixture), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(envsDir, "dev.vars.yml"), []byte("log_level: info\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(envsDir, "dev.vars.yml"), []byte(vars), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "deploy.yml"), []byte(configTestManifest), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "deploy.yml"), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return dir

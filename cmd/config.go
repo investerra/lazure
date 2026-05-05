@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -53,10 +54,13 @@ Secrets are redacted by default; pass --reveal to show full values.`,
 				ShellComplete: CompleteEnvs,
 			},
 			{
-				Name:          "export",
-				Usage:         "print resolved env as `export KEY=VAL` lines (secrets emit '*' unless --reveal)",
-				Arguments:     envArgs(),
-				Flags:         []cli.Flag{revealFlag, containerFlag, onlyFlag},
+				Name:      "export",
+				Usage:     "print resolved env as `export KEY=VAL` lines (secrets emit '*' unless --reveal)",
+				Arguments: envArgs(),
+				Flags: []cli.Flag{
+					revealFlag, containerFlag, onlyFlag,
+					&cli.StringFlag{Name: "match", Usage: "regex (RE2); only emit keys whose name matches"},
+				},
 				Action:        ConfigExport,
 				ShellComplete: CompleteEnvs,
 			},
@@ -134,7 +138,7 @@ type resolvedEntry struct {
 }
 
 const (
-	onlyVarsBit    = 1 << iota
+	onlyVarsBit = 1 << iota
 	onlySecretsBit
 )
 
@@ -321,18 +325,30 @@ func printConfigJSON(entries []resolvedEntry, reveal bool) error {
 
 // ConfigExport implements `lazure config export <env>`. Without
 // --reveal, secret values emit as a literal `'*'` placeholder so the
-// output is still eval-safe but obviously non-real.
+// output is still eval-safe but obviously non-real. --match takes an
+// RE2 regex applied to the env-var key (unanchored): use `^FOO_`
+// for prefix matches, `^FOO$` for exact.
 func ConfigExport(_ context.Context, c *cli.Command) error {
 	const op = "config export"
 	args, err := parseConfigArgs(c, op)
 	if err != nil {
 		return err
 	}
+	var match *regexp.Regexp
+	if pat := c.String("match"); pat != "" {
+		match, err = regexp.Compile(pat)
+		if err != nil {
+			return errs.Usage(errs.Wrap(err, op+": invalid --match regex"))
+		}
+	}
 	entries, err := resolveConfig(c, args.env, args.only)
 	if err != nil {
 		return err
 	}
 	for _, e := range entries {
+		if match != nil && !match.MatchString(e.Key) {
+			continue
+		}
 		val, err := exportValue(e, args.reveal)
 		if err != nil {
 			return errs.Validation(errs.Wrap(err, op))

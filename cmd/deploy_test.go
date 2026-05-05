@@ -90,13 +90,20 @@ func TestParseCLIVars_EmptyValueAllowed(t *testing.T) {
 	}
 }
 
-func TestDeployFlags_IncludesBuild(t *testing.T) {
-	for _, f := range DeployFlags() {
-		if bf, ok := f.(*cli.BoolFlag); ok && bf.Name == "build" {
-			return
+func TestDeployFlags_IncludesExpectedBoolFlags(t *testing.T) {
+	flags := DeployFlags()
+	want := []string{"build", "sync", "force", "wait", "logs", "print", "yes"}
+	have := map[string]bool{}
+	for _, f := range flags {
+		if bf, ok := f.(*cli.BoolFlag); ok {
+			have[bf.Name] = true
 		}
 	}
-	t.Fatal("DeployFlags() missing --build")
+	for _, name := range want {
+		if !have[name] {
+			t.Errorf("DeployFlags() missing --%s", name)
+		}
+	}
 }
 
 // ---------- findAppImage ----------

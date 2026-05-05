@@ -219,11 +219,10 @@ var; ACR registry from acr_server.`,
 				Action:        cmd.Rollout,
 				ShellComplete: cmd.CompleteEnvs,
 				Description: `Rollout ships the current clean git commit end to end.
-It creates a semver tag, builds and pushes the Docker image, syncs secrets, pushes git refs, deploys, then verifies the public version endpoint.
+It creates a calver tag (vYYYYMMDD.N), builds and pushes the Docker image, syncs secrets, pushes git refs, deploys, then verifies the public version endpoint.
 
 Examples:
-  lazure rollout uat -y                   minor bump, build, sync, push, deploy
-  lazure rollout prd --patch              patch release
+  lazure rollout uat -y                   tag, build, sync, push, deploy
   lazure rollout uat --no-tag --no-push   local deploy without publishing git refs
   lazure rollout uat --dry-run            preview the plan without changing anything`,
 			},

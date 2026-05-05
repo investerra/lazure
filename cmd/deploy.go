@@ -26,6 +26,7 @@ func DeployFlags() []cli.Flag {
 		&cli.BoolFlag{Name: "print", Usage: "dump generated ARM YAML to stdout before confirming"},
 		&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "skip the confirmation prompt"},
 		&cli.BoolFlag{Name: "build", Usage: "pull base images, build the Docker image, and push it before deploy"},
+		&cli.BoolFlag{Name: "sync", Usage: "sync SOPS secrets to Key Vault before deploying"},
 		&cli.BoolFlag{Name: "force", Usage: "force a new revision by injecting a timestamp env var"},
 		&cli.StringSliceFlag{Name: "env", Usage: "temporary plain env var for this deploy only: KEY=VALUE (repeatable)"},
 		&cli.StringSliceFlag{Name: "var", Usage: "override a vars entry (repeatable): key=value"},
@@ -51,6 +52,7 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 	print := c.Bool("print")
 	yes := c.Bool("yes")
 	build := c.Bool("build")
+	sync := c.Bool("sync")
 	force := c.Bool("force")
 	envOverrides, err := parseDeployEnvOverrides(c.StringSlice("env"))
 	if err != nil {
@@ -75,7 +77,7 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 	}
 	slog.Debug("deploy: start",
 		"env", t.Env, "dir", t.Dir, "print", print, "yes", yes,
-		"build", build, "force", force, "subscription", t.Sub, "resource_group", t.RG, "app", t.Name)
+		"build", build, "sync", sync, "force", force, "subscription", t.Sub, "resource_group", t.RG, "app", t.Name)
 
 	// Validate before any side effects.
 	if r := lazurecfg.Validate(t.Manifest); r.HasErrors() {
@@ -106,6 +108,13 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 			Pull:       true,
 		}); err != nil {
 			return errs.System(errs.Wrap(err, "deploy: --build"))
+		}
+	}
+
+	if sync {
+		slog.Info("deploy: syncing secrets to Key Vault", "env", t.Env)
+		if err := runSecretsSync(ctx, t.Dir, t.Env); err != nil {
+			return errs.System(errs.Wrap(err, "deploy: --sync"))
 		}
 	}
 
