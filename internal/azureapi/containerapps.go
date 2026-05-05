@@ -16,9 +16,9 @@ import (
 	"github.com/investerra/lazure/internal/errs"
 )
 
-// armAPIVersion pins us to the 2024-03-01 Azure ARM Container Apps API.
+// armAPIVersion pins us to the latest stable Azure ARM Container Apps API.
 // Update here and in azurearm/schema.go docs when bumping.
-const armAPIVersion = "2024-03-01"
+const armAPIVersion = "2026-01-01"
 
 // provisioningPollTimeout caps how long we wait for an ARM async
 // operation or post-PUT GET-loop to reach a terminal state. ACA can

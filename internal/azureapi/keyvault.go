@@ -68,9 +68,9 @@ func SuggestSecretName(name string) string {
 }
 
 // kvAPIVersion is the Key Vault data-plane REST API version we pin to.
-// 7.4 is the current stable release and supports all secrets operations
+// 7.6 is the latest stable release and supports all secrets operations
 // lazure needs (get/put/delete/list).
-const kvAPIVersion = "7.4"
+const kvAPIVersion = "7.6"
 
 // ErrSecretNotFound is returned by GetSecret / DeleteSecret when the
 // named secret doesn't exist in the vault. Use errors.Is for matching.
