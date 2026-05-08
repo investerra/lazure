@@ -302,6 +302,8 @@ type ghRun struct {
 	Status       string `json:"status"`     // queued, in_progress, completed
 	Conclusion   string `json:"conclusion"` // success, failure, cancelled, timed_out, skipped, neutral
 	URL          string `json:"url"`
+	HeadBranch   string `json:"headBranch"` // for tag pushes, this is the tag name
+	Event        string `json:"event"`      // push, workflow_dispatch, ...
 }
 
 // ghJob is the subset of `gh run view --json jobs` we use — enough to
@@ -367,10 +369,11 @@ func watchCI(ctx context.Context, tag string) error {
 	start := time.Now()
 	printed := make(map[int64]string)
 	for {
-		runs, err := ghRunList(ctx, sha)
+		all, err := ghRunList(ctx, sha)
 		if err != nil {
 			return errs.System(errs.Wrap(err, "release: gh run list"))
 		}
+		runs := filterTagPushRuns(all, tag)
 		elapsed := time.Since(start)
 		for _, r := range runs {
 			if line, changed := formatWatchStatusLine(elapsed, r, printed); changed {
@@ -381,7 +384,7 @@ func watchCI(ctx context.Context, tag string) error {
 			return summarizeCI(ctx, tag, runs, start)
 		}
 		if len(runs) == 0 && elapsed > watchStartTimeout {
-			slog.Warn("no CI runs detected for this commit — tag is pushed but no workflow was triggered")
+			slog.Warn("no CI runs detected for this tag — tag is pushed but no workflow was triggered", "tag", tag)
 			return nil
 		}
 
@@ -417,6 +420,21 @@ func formatWatchStatusLine(elapsed time.Duration, r ghRun, prev map[int64]string
 		status = r.Conclusion
 	}
 	return fmt.Sprintf("  [%s] %s: %s%s", fmtDuration(elapsed), r.WorkflowName, status, suffix), true
+}
+
+// filterTagPushRuns narrows `gh run list --commit <sha>` output to runs
+// triggered by the tag push specifically. The same SHA also has runs
+// from the prior branch push (main → uat deploy) — those completed
+// before the tag was cut, so without this filter watchCI declares
+// success the moment it starts.
+func filterTagPushRuns(runs []ghRun, tag string) []ghRun {
+	out := runs[:0:0]
+	for _, r := range runs {
+		if r.Event == "push" && r.HeadBranch == tag {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func allTerminal(runs []ghRun) bool {
@@ -510,7 +528,7 @@ func ghRunList(ctx context.Context, sha string) ([]ghRun, error) {
 	out, err := runGH(ctx, "run", "list",
 		"--commit", sha,
 		"--limit", "20",
-		"--json", "databaseId,workflowName,status,conclusion,url",
+		"--json", "databaseId,workflowName,status,conclusion,url,headBranch,event",
 	)
 	if err != nil {
 		return nil, err

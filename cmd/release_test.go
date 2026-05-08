@@ -177,8 +177,8 @@ func TestComposeTagBody_ForceTimestamp(t *testing.T) {
 
 func TestParseGHRunListJSON_Happy(t *testing.T) {
 	b := []byte(`[
-		{"databaseId":111,"workflowName":"release","status":"in_progress","conclusion":"","url":"https://x/111"},
-		{"databaseId":222,"workflowName":"lint","status":"completed","conclusion":"success","url":"https://x/222"}
+		{"databaseId":111,"workflowName":"release","status":"in_progress","conclusion":"","url":"https://x/111","headBranch":"v20260423.1","event":"push"},
+		{"databaseId":222,"workflowName":"lint","status":"completed","conclusion":"success","url":"https://x/222","headBranch":"main","event":"push"}
 	]`)
 	runs, err := parseGHRunListJSON(b)
 	if err != nil {
@@ -190,8 +190,52 @@ func TestParseGHRunListJSON_Happy(t *testing.T) {
 	if runs[0].WorkflowName != "release" || runs[0].Status != "in_progress" {
 		t.Errorf("run[0] = %+v", runs[0])
 	}
+	if runs[0].HeadBranch != "v20260423.1" || runs[0].Event != "push" {
+		t.Errorf("run[0] tag-push fields = %+v", runs[0])
+	}
 	if runs[1].Conclusion != "success" {
 		t.Errorf("run[1] = %+v", runs[1])
+	}
+}
+
+// ---------- filterTagPushRuns ----------
+
+// Regression guard for the early-exit bug: when a calver tag points at a
+// commit that was already deployed via push-to-main, gh run list returns
+// both the main-push runs (already green) and the tag-push runs (just
+// starting). Without filtering, watchCI sees the green main-push runs
+// and declares success in seconds.
+func TestFilterTagPushRuns_KeepsOnlyTagPush(t *testing.T) {
+	tag := "v20260508.1"
+	runs := []ghRun{
+		{DatabaseID: 1, WorkflowName: "Deploy", Status: "completed", Conclusion: "success", HeadBranch: "main", Event: "push"},
+		{DatabaseID: 2, WorkflowName: "Code Quality", Status: "completed", Conclusion: "success", HeadBranch: "main", Event: "push"},
+		{DatabaseID: 3, WorkflowName: "Deploy", Status: "queued", HeadBranch: tag, Event: "push"},
+	}
+	got := filterTagPushRuns(runs, tag)
+	if len(got) != 1 || got[0].DatabaseID != 3 {
+		t.Errorf("expected only the tag-push run, got %+v", got)
+	}
+}
+
+func TestFilterTagPushRuns_IgnoresWorkflowDispatch(t *testing.T) {
+	tag := "v20260508.1"
+	runs := []ghRun{
+		{DatabaseID: 1, HeadBranch: tag, Event: "workflow_dispatch"},
+		{DatabaseID: 2, HeadBranch: tag, Event: "push"},
+	}
+	got := filterTagPushRuns(runs, tag)
+	if len(got) != 1 || got[0].DatabaseID != 2 {
+		t.Errorf("expected only the push event, got %+v", got)
+	}
+}
+
+func TestFilterTagPushRuns_EmptyWhenNoneMatch(t *testing.T) {
+	runs := []ghRun{
+		{DatabaseID: 1, HeadBranch: "main", Event: "push"},
+	}
+	if got := filterTagPushRuns(runs, "v20260508.1"); len(got) != 0 {
+		t.Errorf("expected empty, got %+v", got)
 	}
 }
 
