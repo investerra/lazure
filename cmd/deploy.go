@@ -30,6 +30,8 @@ func DeployFlags() []cli.Flag {
 		&cli.BoolFlag{Name: "force", Usage: "force a new revision by injecting a timestamp env var"},
 		&cli.StringSliceFlag{Name: "env", Usage: "temporary plain env var for this deploy only: KEY=VALUE (repeatable)"},
 		&cli.StringSliceFlag{Name: "var", Usage: "override a vars entry (repeatable): key=value"},
+		&cli.StringSliceFlag{Name: "build-arg", Usage: "with --build: extra --build-arg KEY=VAL passed to docker build (repeatable)"},
+		&cli.StringSliceFlag{Name: "secret", Usage: "with --build: --secret value passed verbatim to docker build (repeatable)"},
 		&cli.BoolFlag{Name: "wait", Usage: "after ARM succeeds, wait until the new revision's replicas are Ready"},
 		&cli.DurationFlag{Name: "wait-timeout", Value: 5 * time.Minute, Usage: "max wait time (default: 5m)"},
 		&cli.BoolFlag{Name: "logs", Value: true, Usage: "stream logs from the first ready replica during --wait (--logs=false to disable)"},
@@ -106,9 +108,13 @@ func Deploy(ctx context.Context, c *cli.Command) error {
 			Vars:       t.Vars,
 			Push:       true,
 			Pull:       true,
+			BuildArgs:  c.StringSlice("build-arg"),
+			Secrets:    c.StringSlice("secret"),
 		}); err != nil {
 			return errs.System(errs.Wrap(err, "deploy: --build"))
 		}
+	} else if len(c.StringSlice("build-arg")) > 0 || len(c.StringSlice("secret")) > 0 {
+		slog.Warn("deploy: --build-arg / --secret ignored without --build")
 	}
 
 	if sync {

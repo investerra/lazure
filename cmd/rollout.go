@@ -26,11 +26,12 @@ func RolloutFlags() []cli.Flag {
 	}
 }
 
+// rolloutEnv is the only environment rollout will ever target. Rollout is
+// production-only by design; staging and dev go through `lazure deploy`.
+const rolloutEnv = "prd"
+
 func Rollout(ctx context.Context, c *cli.Command) error {
-	env := c.StringArg("env")
-	if env == "" {
-		return errs.Usage(errs.New("rollout: env argument is required (e.g. 'lazure rollout uat')"))
-	}
+	env := rolloutEnv
 	dir := c.String("dir")
 	yes := c.Bool("yes")
 	dryRun := c.Bool("dry-run")
@@ -62,6 +63,9 @@ func Rollout(ctx context.Context, c *cli.Command) error {
 	branch = strings.TrimSpace(branch)
 	if branch == "HEAD" && !noPush {
 		return errs.Usage(errs.New("rollout: detached HEAD cannot be pushed; checkout a branch or use --no-push"))
+	}
+	if err := rolloutBranchError(branch); err != nil {
+		return errs.Usage(err)
 	}
 
 	slog.Info("fetching tags from origin")
@@ -147,6 +151,16 @@ func Rollout(ctx context.Context, c *cli.Command) error {
 		}
 	}
 	return nil
+}
+
+// rolloutBranchError enforces that rollout only runs from a release branch.
+// Production deploys must come from main/master so the calver tag points at
+// shipped code, never from a feature branch.
+func rolloutBranchError(branch string) error {
+	if branch == "main" || branch == "master" {
+		return nil
+	}
+	return errs.Errorf("rollout: must run from main or master (currently on %q); rollout is production-only", branch)
 }
 
 func rolloutCleanTreeError(status string) error {

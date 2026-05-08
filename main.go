@@ -141,23 +141,25 @@ func newApp() *cli.Command {
 		Commands: []*cli.Command{
 			// Deploy pipeline
 			{
-				Name:          "deploy",
-				Usage:         "deploy to an environment",
-				Arguments:     envArg(),
-				Flags:         cmd.DeployFlags(),
-				Action:        cmd.Deploy,
-				ShellComplete: cmd.CompleteEnvs,
+				Name:                      "deploy",
+				Usage:                     "deploy to an environment",
+				Arguments:                 envArg(),
+				Flags:                     cmd.DeployFlags(),
+				Action:                    cmd.Deploy,
+				ShellComplete:             cmd.CompleteEnvs,
+				DisableSliceFlagSeparator: true,
 				Description: `Deploy renders one environment, verifies ACR image tags, and sends it to Azure Container Apps.
 Use --build to build and push the image first. Use --env for one-off plain env vars that apply only to this deployment.
 
 Examples:
-  lazure deploy dev                       interactive, with confirm
-  lazure deploy dev -y                    non-interactive (CI)
-  lazure deploy dev --build               pull base images, build, push, deploy
-  lazure deploy dev --env LOG_LEVEL=debug deploy once with a temporary env var
-  lazure deploy dev --wait --logs         block until live + tail logs
-  lazure deploy dev --force               force a new revision with a timestamp env
-  lazure deploy dev --print               preview ARM payload first`,
+  lazure deploy dev                                      interactive, with confirm
+  lazure deploy dev -y                                   non-interactive (CI)
+  lazure deploy dev --build                              pull base images, build, push, deploy
+  lazure deploy dev --build --secret id=tok,env=GH_TOKEN forward a secret to docker build
+  lazure deploy dev --env LOG_LEVEL=debug                deploy once with a temporary env var
+  lazure deploy dev --wait --logs                        block until live + tail logs
+  lazure deploy dev --force                              force a new revision with a timestamp env
+  lazure deploy dev --print                              preview ARM payload first`,
 			},
 			{
 				Name:          "render",
@@ -191,12 +193,13 @@ Examples:
 Exits 0 if no drift, 1 if drift detected.`,
 			},
 			{
-				Name:          "build",
-				Usage:         "build (and optionally push) the docker image for an environment",
-				Arguments:     envArg(),
-				Flags:         cmd.BuildFlags(),
-				Action:        cmd.Build,
-				ShellComplete: cmd.CompleteEnvs,
+				Name:                      "build",
+				Usage:                     "build (and optionally push) the docker image for an environment",
+				Arguments:                 envArg(),
+				Flags:                     cmd.BuildFlags(),
+				Action:                    cmd.Build,
+				ShellComplete:             cmd.CompleteEnvs,
+				DisableSliceFlagSeparator: true,
 				Description: `Build creates the Docker image for one environment and can push it to ACR.
 Lazure reads the image name from vars and adds build details such as commit, branch, and build date.
 
@@ -212,19 +215,19 @@ GIT_BRANCH, BUILD_DATE. Image tag comes from the env's docker_image
 var; ACR registry from acr_server.`,
 			},
 			{
-				Name:          "rollout",
-				Usage:         "tag, build, sync secrets, push, deploy, and verify one clean commit",
-				Arguments:     envArg(),
-				Flags:         cmd.RolloutFlags(),
-				Action:        cmd.Rollout,
-				ShellComplete: cmd.CompleteEnvs,
-				Description: `Rollout ships the current clean git commit end to end.
+				Name:   "rollout",
+				Usage:  "tag, build, sync secrets, push, deploy, and verify one clean commit (prod only, main/master only)",
+				Flags:  cmd.RolloutFlags(),
+				Action: cmd.Rollout,
+				Description: `Rollout ships the current clean git commit to PRODUCTION end to end.
 It creates a calver tag (vYYYYMMDD.N), builds and pushes the Docker image, syncs secrets, pushes git refs, deploys, then verifies the public version endpoint.
 
+Rollout is production-only and refuses to run from any branch other than main or master. Use 'lazure deploy <env>' for staging/dev.
+
 Examples:
-  lazure rollout uat -y                   tag, build, sync, push, deploy
-  lazure rollout uat --no-tag --no-push   local deploy without publishing git refs
-  lazure rollout uat --dry-run            preview the plan without changing anything`,
+  lazure rollout -y                   tag, build, sync, push, deploy to prod
+  lazure rollout --no-tag --no-push   local deploy without publishing git refs
+  lazure rollout --dry-run            preview the plan without changing anything`,
 			},
 			{
 				Name:   "release",

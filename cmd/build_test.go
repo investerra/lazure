@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/urfave/cli/v3"
 )
 
 func TestBuildDockerArgs_OrderingAndFlags(t *testing.T) {
@@ -135,6 +137,46 @@ func TestRunImageBuild_PullBuildPushSequence(t *testing.T) {
 	}
 	if commands[2] != "docker push acr.azurecr.io/app:abc" {
 		t.Errorf("push command = %q", commands[2])
+	}
+}
+
+// urfave/cli v3 splits StringSlice values on commas by default, which
+// mangles docker --secret values like "id=tok,env=GH_TOKEN" into two
+// flags. The build/deploy subcommands set DisableSliceFlagSeparator to
+// disable that split — this test guards the wiring.
+func TestSecretFlag_PreservesCommas(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		argv []string
+	}{
+		{"build", []string{"lazure", "build", "--secret", "id=tok,env=GH_TOKEN", "dev"}},
+		{"deploy", []string{"lazure", "deploy", "--secret", "id=tok,env=GH_TOKEN", "dev"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			root := &cli.Command{
+				Name: "lazure",
+				Commands: []*cli.Command{
+					{
+						Name:                      tc.name,
+						Arguments:                 []cli.Argument{&cli.StringArg{Name: "env"}},
+						Flags:                     []cli.Flag{&cli.StringSliceFlag{Name: "secret"}},
+						DisableSliceFlagSeparator: true,
+						Action: func(_ context.Context, c *cli.Command) error {
+							got = c.StringSlice("secret")
+							return nil
+						},
+					},
+				},
+			}
+			if err := root.Run(context.Background(), tc.argv); err != nil {
+				t.Fatal(err)
+			}
+			want := []string{"id=tok,env=GH_TOKEN"}
+			if strings.Join(got, "|") != strings.Join(want, "|") {
+				t.Errorf("got %#v, want %#v", got, want)
+			}
+		})
 	}
 }
 

@@ -14,3 +14,20 @@ func TestRolloutCleanTreeError(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestRolloutBranchError(t *testing.T) {
+	for _, branch := range []string{"main", "master"} {
+		if err := rolloutBranchError(branch); err != nil {
+			t.Fatalf("branch %q should be allowed, got %v", branch, err)
+		}
+	}
+	for _, branch := range []string{"dev", "feature/x", "HEAD", ""} {
+		err := rolloutBranchError(branch)
+		if err == nil {
+			t.Fatalf("branch %q should be rejected", branch)
+		}
+		if !strings.Contains(err.Error(), "main or master") {
+			t.Fatalf("error should mention main/master, got %v", err)
+		}
+	}
+}

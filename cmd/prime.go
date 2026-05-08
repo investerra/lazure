@@ -78,7 +78,7 @@ var commandCategory = map[string]string{
 	"render":      "Deploy pipeline",
 	"diff":        "Deploy pipeline",
 	"build":       "Deploy pipeline",
-	"rollout":     "Deploy pipeline",
+	"rollout":     "Production deploy pipeline (prd, main/master only)",
 	"release":     "Deploy pipeline",
 	"self-update": "Deploy pipeline",
 
@@ -143,7 +143,7 @@ var (
 var commandMetadata = map[string]commandMeta{
 	// ---------- Deploy pipeline ----------
 	"lazure deploy": {
-		useCase: "roll out an image to a target environment. By default the image must already exist in ACR; use `--build` to build and push first, `--sync` to push SOPS secrets to Key Vault before deploying, `--env KEY=VALUE` for one-off runtime env vars, and `--force` to create a fresh revision even when the template would otherwise be unchanged.",
+		useCase: "roll out an image to a target environment. By default the image must already exist in ACR; use `--build` to build and push first (with optional `--build-arg KEY=VAL` and `--secret id=...,env=...` forwarded to docker build), `--sync` to push SOPS secrets to Key Vault before deploying, `--env KEY=VALUE` for one-off runtime env vars, and `--force` to create a fresh revision even when the template would otherwise be unchanged.",
 		prerequisites: []string{
 			prereqAzureAuth,
 			prereqManifest,
@@ -171,8 +171,9 @@ var commandMetadata = map[string]commandMeta{
 		dependencies: []string{depDocker},
 	},
 	"lazure rollout": {
-		useCase: "ship the current clean git commit end to end: calver tag (`vYYYYMMDD.N`), image build/push, secrets sync, git push, deploy, and public version verification.",
+		useCase: "ship the current clean git commit to PRODUCTION end to end: calver tag (`vYYYYMMDD.N`), image build/push, secrets sync, git push, deploy to `prd`, and public version verification. Production-only — for staging/dev use `lazure deploy <env>`.",
 		prerequisites: []string{
+			"Current branch must be `main` or `master`; rollout refuses to run from any other branch.",
 			"Git working tree must be completely clean; rollout never commits or stages files.",
 			prereqAzureAuth,
 			prereqManifest,
