@@ -41,7 +41,6 @@ func TestUnsupportedLiveStateFields_DetectsFieldsDeployWouldDrop(t *testing.T) {
 		"/properties/configuration/ingress/stickySessions",
 		"/properties/template/revisionSuffix",
 		"/properties/template/serviceBinds",
-		"/tags",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("UnsupportedLiveStateFields() = %#v, want %#v", got, want)

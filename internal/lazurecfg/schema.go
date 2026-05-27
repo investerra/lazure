@@ -7,29 +7,32 @@ package lazurecfg
 
 // Manifest is the top-level shape of deploy.yml.
 type Manifest struct {
-	App            App                  `json:"app"`
-	Ingress        *Ingress             `json:"ingress,omitempty"`
-	Registries     []Registry           `json:"registries,omitempty"`
-	Scale          *Scale               `json:"scale,omitempty"`
-	Volumes        []Volume             `json:"volumes,omitempty"`
-	Env            map[string]*EnvValue `json:"env,omitempty"`
-	InitContainers []Container          `json:"init_containers,omitempty"`
-	Containers     []Container          `json:"containers"`
+	App                  App                  `json:"app"`
+	Ingress              *Ingress             `json:"ingress,omitempty"`
+	Registries           []Registry           `json:"registries,omitempty"`
+	Scale                *Scale               `json:"scale,omitempty"`
+	Volumes              []Volume             `json:"volumes,omitempty"`
+	Env                  map[string]*EnvValue `json:"env,omitempty"`
+	InitContainers       []Container          `json:"init_containers,omitempty"`
+	Containers           []Container          `json:"containers"`
+	MaxInactiveRevisions int                  `json:"max_inactive_revisions,omitempty"`
 }
 
 // App is the identity/targeting header of the manifest.
 type App struct {
-	Name                 string   `json:"name"`
-	Location             string   `json:"location"`
-	ResourceGroup        string   `json:"resource_group"`
-	ManagedEnvironmentID string   `json:"managed_environment_id"`
-	Identity             Identity `json:"identity"`
+	Name                 string            `json:"name"`
+	Location             string            `json:"location"`
+	ResourceGroup        string            `json:"resource_group"`
+	ManagedEnvironmentID string            `json:"managed_environment_id"`
+	Identity             Identity          `json:"identity"`
+	Tags                 map[string]string `json:"tags,omitempty"`
 }
 
 // Ingress configures external traffic. Omit the whole block for no ingress.
 type Ingress struct {
 	External       bool            `json:"external"`
 	TargetPort     int             `json:"target_port"`
+	ExposedPort    int             `json:"exposed_port,omitempty"`
 	Transport      string          `json:"transport,omitempty"`       // auto|http|http2|tcp
 	AllowInsecure  bool            `json:"allow_insecure,omitempty"`
 	Cors           *Cors           `json:"cors,omitempty"`

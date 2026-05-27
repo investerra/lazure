@@ -21,6 +21,7 @@ type ContainerApp struct {
 	Type       string                 `json:"type"` // "Microsoft.App/containerApps"
 	Location   string                 `json:"location"`
 	Name       string                 `json:"name"`
+	Tags       map[string]string      `json:"tags,omitempty"`
 	Identity   *Identity              `json:"identity,omitempty"`
 	Properties ContainerAppProperties `json:"properties"`
 }
@@ -65,15 +66,17 @@ type ContainerAppProperties struct {
 // Configuration groups app-level (non-replica) settings. Secrets here are
 // auto-populated from deploy.yml secret references via transform.go.
 type Configuration struct {
-	ActiveRevisionsMode string     `json:"activeRevisionsMode,omitempty"` // Single | Multiple
-	Ingress             *Ingress   `json:"ingress,omitempty"`
-	Registries          []Registry `json:"registries,omitempty"`
-	Secrets             []Secret   `json:"secrets,omitempty"`
+	ActiveRevisionsMode  string     `json:"activeRevisionsMode,omitempty"` // Single | Multiple
+	MaxInactiveRevisions int        `json:"maxInactiveRevisions,omitempty"`
+	Ingress              *Ingress   `json:"ingress,omitempty"`
+	Registries           []Registry `json:"registries,omitempty"`
+	Secrets              []Secret   `json:"secrets,omitempty"`
 }
 
 type Ingress struct {
 	External               bool                    `json:"external"`
 	TargetPort             int                     `json:"targetPort"`
+	ExposedPort            int                     `json:"exposedPort,omitempty"`
 	Transport              string                  `json:"transport,omitempty"` // lowercase: auto | http | http2 | tcp
 	AllowInsecure          bool                    `json:"allowInsecure,omitempty"`
 	CorsPolicy             *CorsPolicy             `json:"corsPolicy,omitempty"`
