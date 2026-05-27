@@ -134,7 +134,7 @@ func writeGitHubEnvironmentOutput(env string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	_, err = fmt.Fprintf(f, "environment=%s\n", env)
 	return err
 }

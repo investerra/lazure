@@ -19,6 +19,12 @@
         },
         "identity": {
           "type": "string"
+        },
+        "tags": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
         }
       },
       "additionalProperties": false,
@@ -243,6 +249,9 @@
         "target_port": {
           "type": "integer"
         },
+        "exposed_port": {
+          "type": "integer"
+        },
         "transport": {
           "type": "string"
         },
@@ -282,6 +291,9 @@
             "$ref": "#/$defs/Registry"
           },
           "type": "array"
+        },
+        "max_inactive_revisions": {
+          "type": "integer"
         },
         "scale": {
           "$ref": "#/$defs/Scale"

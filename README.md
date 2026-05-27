@@ -281,6 +281,136 @@ lazure schema                       # writes <dir>/deploy.schema.json
 lazure schema -                     # to stdout (pipe to validators / jq)
 ```
 
+## Tags
+
+Azure resource tags (top-level key/value labels used for cost allocation,
+ownership, Azure Policy, automation hints) are declared under `app.tags`
+in `deploy.yml`:
+
+```yaml
+app:
+  name: my-service
+  location: switzerlandnorth
+  resource_group: "{{ .Vars.resource_group }}"
+  managed_environment_id: "{{ .Vars.managed_environment_id }}"
+  identity: "{{ .Vars.user_assigned_identity_id }}"
+  tags:
+    service: my-service
+    env: "{{ .Vars.app_env }}"        # per-env value
+    managed_by: lazure
+    cost_center: platform
+```
+
+Values are plain strings and accept the standard `{{ .Vars.x }}` templating,
+so you can derive per-env tags from your vars files.
+
+Lazure owns these tags on every deploy — anything in the live resource
+that isn't in `app.tags` is removed. If another system (Terraform,
+Azure Policy) is also stamping tags onto the same Container App, declare
+them all in `deploy.yml` to keep them, or stop the other system from
+touching that resource.
+
+## Ingress
+
+Azure rejects most combinations of `external`, `transport`, and `exposed_port`. Three combinations work:
+
+**External HTTP** — public on the internet, browser-reachable. Most common.
+
+```yaml
+ingress:
+  external: true
+  target_port: 8000
+  transport: http        # or http2 / auto
+  # NO exposed_port — Azure rejects it on non-TCP transports
+```
+
+**Internal TCP** — reachable only from within the same Container Apps managed environment. Use for service-to-service that's not HTTP.
+
+```yaml
+ingress:
+  external: false
+  target_port: 8000
+  exposed_port: 8000     # allowed (and effectively required) for TCP
+  transport: tcp
+```
+
+**Internal HTTP** — HTTP service reachable only from inside the managed env.
+
+```yaml
+ingress:
+  external: false
+  target_port: 8000
+  transport: http
+  # NO exposed_port
+```
+
+**What Azure rejects:**
+
+| external | transport | exposed_port | result |
+|----------|-----------|--------------|--------|
+| `true`   | `tcp`     | any          | `ContainerAppTcpRequiresVnet` — external TCP needs a VNet-attached managed env |
+| any      | `http` / `http2` / `auto` | set | Azure ignores or rejects `exposed_port` for non-TCP transports |
+
+## Developing
+
+<details>
+<summary> Local setup, tests, lint, build</summary>
+
+Working on lazure itself? You need Go 1.26+ and `golangci-lint` v2.11.4 (matches CI).
+
+Install Go 1.26 (Linux x86_64; adjust archive for darwin/arm64 as needed):
+
+```sh
+curl -fsSL https://go.dev/dl/go1.26.0.linux-amd64.tar.gz -o /tmp/go1.26.tar.gz
+mkdir -p ~/sdk && tar -xzf /tmp/go1.26.tar.gz -C ~/sdk/ && mv ~/sdk/go ~/sdk/go1.26
+export PATH="$HOME/sdk/go1.26/bin:$PATH"   # add to ~/.bashrc to persist
+go version                                  # should print: go1.26.x
+```
+
+Install `golangci-lint` at the CI-pinned version:
+
+```sh
+curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+  | sh -s -- -b ~/.local/bin v2.11.4
+golangci-lint version                       # should print: 2.11.4
+```
+
+Run tests:
+
+```sh
+go test ./...                                # all packages
+go test -count=1 ./...                       # bypass test cache
+go test -v -run TestValidate_Ingress ./internal/lazurecfg/   # one test by regex
+go test -cover ./...                         # with coverage
+go test -race ./...                          # race detector
+```
+
+Run lint locally (same command CI runs):
+
+```sh
+golangci-lint run --timeout 5m
+```
+
+Build + install a local binary (replaces the one from `lazure self-update`):
+
+```sh
+go build -o ~/.local/bin/lazure .
+```
+
+After editing the manifest struct (`internal/lazurecfg/schema.go`), regenerate the embedded JSON Schema so editor tooling stays in sync:
+
+```sh
+go run ./cmd/genschema internal/schema/schema.json
+```
+
+Pre-push gate (matches CI's `lint` + `test` jobs):
+
+```sh
+golangci-lint run --timeout 5m && go test ./...
+```
+
+</details>
+
 ## Troubleshooting
 
 If something looks wrong, run **`lazure doctor`** first. It enumerates every file Lazure expects, every Azure permission it needs, and every per-env stage of the load pipeline, and tells you exactly what's missing or broken.

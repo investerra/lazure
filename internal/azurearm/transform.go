@@ -29,6 +29,7 @@ func Transform(m *lazurecfg.Manifest, opts TransformOptions) (*ContainerApp, err
 		Type:     "Microsoft.App/containerApps",
 		Location: m.App.Location,
 		Name:     m.App.Name,
+		Tags:     m.App.Tags,
 		Identity: buildIdentity(m.App.Identity),
 		Properties: ContainerAppProperties{
 			ManagedEnvironmentID: m.App.ManagedEnvironmentID,
@@ -68,8 +69,9 @@ func buildIdentity(id lazurecfg.Identity) *Identity {
 
 func buildConfiguration(m *lazurecfg.Manifest, opts TransformOptions) (Configuration, error) {
 	cfg := Configuration{
-		Registries: buildRegistries(m),
-		Secrets:    buildSecrets(m, opts.VaultURL),
+		Registries:           buildRegistries(m),
+		Secrets:              buildSecrets(m, opts.VaultURL),
+		MaxInactiveRevisions: m.MaxInactiveRevisions,
 	}
 
 	if m.Ingress != nil {
@@ -143,6 +145,7 @@ func buildIngress(i *lazurecfg.Ingress, previousRevision string) *Ingress {
 	out := &Ingress{
 		External:      i.External,
 		TargetPort:    i.TargetPort,
+		ExposedPort:   i.ExposedPort,
 		Transport:     i.Transport,     // lazurecfg uses lowercase to match ARM
 		AllowInsecure: i.AllowInsecure,
 	}
