@@ -351,6 +351,66 @@ ingress:
 | `true`   | `tcp`     | any          | `ContainerAppTcpRequiresVnet` — external TCP needs a VNet-attached managed env |
 | any      | `http` / `http2` / `auto` | set | Azure ignores or rejects `exposed_port` for non-TCP transports |
 
+## Developing
+
+<details>
+<summary> Local setup, tests, lint, build</summary>
+
+Working on lazure itself? You need Go 1.26+ and `golangci-lint` v2.11.4 (matches CI).
+
+Install Go 1.26 (Linux x86_64; adjust archive for darwin/arm64 as needed):
+
+```sh
+curl -fsSL https://go.dev/dl/go1.26.0.linux-amd64.tar.gz -o /tmp/go1.26.tar.gz
+mkdir -p ~/sdk && tar -xzf /tmp/go1.26.tar.gz -C ~/sdk/ && mv ~/sdk/go ~/sdk/go1.26
+export PATH="$HOME/sdk/go1.26/bin:$PATH"   # add to ~/.bashrc to persist
+go version                                  # should print: go1.26.x
+```
+
+Install `golangci-lint` at the CI-pinned version:
+
+```sh
+curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+  | sh -s -- -b ~/.local/bin v2.11.4
+golangci-lint version                       # should print: 2.11.4
+```
+
+Run tests:
+
+```sh
+go test ./...                                # all packages
+go test -count=1 ./...                       # bypass test cache
+go test -v -run TestValidate_Ingress ./internal/lazurecfg/   # one test by regex
+go test -cover ./...                         # with coverage
+go test -race ./...                          # race detector
+```
+
+Run lint locally (same command CI runs):
+
+```sh
+golangci-lint run --timeout 5m
+```
+
+Build + install a local binary (replaces the one from `lazure self-update`):
+
+```sh
+go build -o ~/.local/bin/lazure .
+```
+
+After editing the manifest struct (`internal/lazurecfg/schema.go`), regenerate the embedded JSON Schema so editor tooling stays in sync:
+
+```sh
+go run ./cmd/genschema internal/schema/schema.json
+```
+
+Pre-push gate (matches CI's `lint` + `test` jobs):
+
+```sh
+golangci-lint run --timeout 5m && go test ./...
+```
+
+</details>
+
 ## Troubleshooting
 
 If something looks wrong, run **`lazure doctor`** first. It enumerates every file Lazure expects, every Azure permission it needs, and every per-env stage of the load pipeline, and tells you exactly what's missing or broken.

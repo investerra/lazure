@@ -52,6 +52,7 @@ func Validate(m *Manifest) *ValidationResult {
 	validateApp(m, r)
 	validateIngress(m, r)
 	validateRegistries(m, r)
+	validateRevisions(m, r)
 	validateScale(m, r)
 	validateSharedEnv(m, r)
 	validateContainers(m, r)
@@ -87,6 +88,16 @@ func validateApp(m *Manifest, r *ValidationResult) {
 func validateIngress(m *Manifest, r *ValidationResult) {
 	if m.Ingress == nil {
 		return
+	}
+	// exposed_port is only honored on tcp transport; Azure ignores or rejects
+	// it on http/http2/auto. An empty transport means Azure's default ("auto"),
+	// which still isn't tcp — so flag any non-tcp here.
+	if m.Ingress.ExposedPort != 0 && m.Ingress.Transport != "tcp" {
+		got := m.Ingress.Transport
+		if got == "" {
+			got = "auto (default)"
+		}
+		r.addError("ingress.exposed_port is only valid when transport=tcp (got transport=%q)", got)
 	}
 	validateIPRestrictions(m.Ingress.IPRestrictions, r)
 	validateTraffic(m.Ingress.Traffic, r)
@@ -133,6 +144,17 @@ func validateTraffic(t *Traffic, r *ValidationResult) {
 }
 
 // ---------- registries ----------
+
+// max_inactive_revisions maps to /properties/configuration/maxInactiveRevisions.
+// Azure accepts 0–100; negatives are rejected by ARM.
+func validateRevisions(m *Manifest, r *ValidationResult) {
+	if m.MaxInactiveRevisions < 0 {
+		r.addError("max_inactive_revisions must be >= 0 (got %d)", m.MaxInactiveRevisions)
+	}
+	if m.MaxInactiveRevisions > 100 {
+		r.addWarn("max_inactive_revisions=%d exceeds the documented Azure max of 100", m.MaxInactiveRevisions)
+	}
+}
 
 func validateRegistries(m *Manifest, r *ValidationResult) {
 	for i, reg := range m.Registries {

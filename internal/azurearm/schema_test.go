@@ -244,6 +244,106 @@ etag: "abc123"
 	}
 }
 
+// Confirms that tags, ingress.exposedPort, and configuration.maxInactiveRevisions
+// — the three drift-blocker fields lazure now manages — round-trip through
+// YAML cleanly. Catches json-tag regressions that would silently drop them
+// from the ARM PUT body.
+func TestRoundTrip_TagsExposedPortMaxInactive(t *testing.T) {
+	app := ContainerApp{
+		Type:     "Microsoft.App/containerApps",
+		Location: "switzerlandnorth",
+		Name:     "api-server",
+		Tags: map[string]string{
+			"service":    "api-server",
+			"env":        "dev",
+			"managed_by": "lazure",
+		},
+		Properties: ContainerAppProperties{
+			ManagedEnvironmentID: "/subs/x/managedEnvironments/env",
+			Configuration: Configuration{
+				ActiveRevisionsMode:  "Single",
+				MaxInactiveRevisions: 25,
+				Ingress: &Ingress{
+					External:    false,
+					TargetPort:  8000,
+					ExposedPort: 8000,
+					Transport:   "tcp",
+				},
+			},
+			Template: Template{
+				Containers: []Container{{
+					Name:      "app",
+					Image:     "acr.io/app:v1",
+					Resources: &Resources{CPU: 0.5, Memory: "1Gi"},
+				}},
+			},
+		},
+	}
+
+	out, err := yaml.Marshal(app)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := string(out)
+
+	mustContain(t, got, "exposedPort: 8000")
+	mustContain(t, got, "maxInactiveRevisions: 25")
+	mustContain(t, got, "tags:")
+	mustContain(t, got, "service: api-server")
+	mustContain(t, got, "managed_by: lazure")
+
+	var round ContainerApp
+	if err := yaml.Unmarshal(out, &round); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if round.Properties.Configuration.Ingress.ExposedPort != 8000 {
+		t.Errorf("exposedPort lost: %d", round.Properties.Configuration.Ingress.ExposedPort)
+	}
+	if round.Properties.Configuration.MaxInactiveRevisions != 25 {
+		t.Errorf("maxInactiveRevisions lost: %d", round.Properties.Configuration.MaxInactiveRevisions)
+	}
+	if got, want := round.Tags["service"], "api-server"; got != want {
+		t.Errorf("tags[service] = %q, want %q", got, want)
+	}
+	if len(round.Tags) != 3 {
+		t.Errorf("tag count = %d, want 3", len(round.Tags))
+	}
+}
+
+// All three new fields are optional. Verify omitempty actually drops them
+// from the YAML when unset — otherwise a no-tags PUT would emit `tags: {}`
+// and an unset max_inactive_revisions would emit `maxInactiveRevisions: 0`,
+// both of which would semantically differ from "not specified".
+func TestRoundTrip_NewFieldsOmittedWhenUnset(t *testing.T) {
+	app := ContainerApp{
+		Type:     "Microsoft.App/containerApps",
+		Location: "switzerlandnorth",
+		Name:     "api-server",
+		Properties: ContainerAppProperties{
+			ManagedEnvironmentID: "/subs/x/managedEnvironments/env",
+			Configuration: Configuration{
+				ActiveRevisionsMode: "Single",
+				Ingress: &Ingress{
+					External:   true,
+					TargetPort: 8000,
+					Transport:  "http",
+				},
+			},
+			Template: Template{
+				Containers: []Container{{Name: "app", Image: "acr.io/app:v1"}},
+			},
+		},
+	}
+	out, _ := yaml.Marshal(app)
+	got := string(out)
+
+	for _, key := range []string{"exposedPort", "maxInactiveRevisions", "tags:"} {
+		if strings.Contains(got, key) {
+			t.Errorf("expected %q to be omitted, but found it. full output:\n%s", key, got)
+		}
+	}
+}
+
 func mustContain(t *testing.T, s, needle string) {
 	t.Helper()
 	if !strings.Contains(s, needle) {

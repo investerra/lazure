@@ -10,12 +10,12 @@ type Manifest struct {
 	App                  App                  `json:"app"`
 	Ingress              *Ingress             `json:"ingress,omitempty"`
 	Registries           []Registry           `json:"registries,omitempty"`
+	MaxInactiveRevisions int                  `json:"max_inactive_revisions,omitempty"`
 	Scale                *Scale               `json:"scale,omitempty"`
 	Volumes              []Volume             `json:"volumes,omitempty"`
 	Env                  map[string]*EnvValue `json:"env,omitempty"`
 	InitContainers       []Container          `json:"init_containers,omitempty"`
 	Containers           []Container          `json:"containers"`
-	MaxInactiveRevisions int                  `json:"max_inactive_revisions,omitempty"`
 }
 
 // App is the identity/targeting header of the manifest.

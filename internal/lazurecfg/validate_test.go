@@ -553,3 +553,100 @@ func TestValidationResult_Err_Empty(t *testing.T) {
 		t.Errorf("empty result should return nil error, got %v", err)
 	}
 }
+
+// ---------- ingress.exposed_port ----------
+
+// exposed_port is meaningful only on tcp transport; Azure ignores or
+// rejects it for http/http2/auto. The validator should flag the mismatch
+// at validate time so users don't discover it via a failed deploy.
+func TestValidate_Ingress_ExposedPort_RequiresTcp(t *testing.T) {
+	cases := []struct {
+		name      string
+		transport string
+		wantErr   bool
+	}{
+		{"tcp ok", "tcp", false},
+		{"http rejected", "http", true},
+		{"http2 rejected", "http2", true},
+		{"auto rejected", "auto", true},
+		{"empty (=auto default) rejected", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := validManifest()
+			m.Ingress = &Ingress{
+				External:    false,
+				TargetPort:  8000,
+				ExposedPort: 8000,
+				Transport:   tc.transport,
+			}
+			r := Validate(m)
+			if tc.wantErr {
+				if !r.HasErrors() {
+					t.Fatalf("expected error for transport=%q with exposed_port set", tc.transport)
+				}
+				if !errorsContain(r.Errors, "ingress.exposed_port") {
+					t.Errorf("errors %v, want one mentioning ingress.exposed_port", r.Errors)
+				}
+			} else if r.HasErrors() {
+				t.Errorf("unexpected error for transport=%q: %v", tc.transport, r.Errors)
+			}
+		})
+	}
+}
+
+// exposed_port unset (=0) must be a no-op regardless of transport.
+func TestValidate_Ingress_ExposedPort_UnsetAlwaysOK(t *testing.T) {
+	for _, tr := range []string{"", "tcp", "http", "http2", "auto"} {
+		t.Run("transport="+tr, func(t *testing.T) {
+			m := validManifest()
+			m.Ingress = &Ingress{External: true, TargetPort: 8000, Transport: tr}
+			r := Validate(m)
+			if r.HasErrors() {
+				t.Errorf("unexpected error for transport=%q with exposed_port=0: %v", tr, r.Errors)
+			}
+		})
+	}
+}
+
+// ---------- max_inactive_revisions ----------
+
+// Azure rejects negative max_inactive_revisions at ARM time. Catch it earlier.
+func TestValidate_MaxInactiveRevisions_Negative(t *testing.T) {
+	m := validManifest()
+	m.MaxInactiveRevisions = -1
+	r := Validate(m)
+	if !r.HasErrors() {
+		t.Fatal("expected error for negative max_inactive_revisions")
+	}
+	if !errorsContain(r.Errors, "max_inactive_revisions") {
+		t.Errorf("errors %v, want one mentioning max_inactive_revisions", r.Errors)
+	}
+}
+
+// Azure's documented upper bound is 100; we warn rather than error so
+// callers aren't blocked if the limit changes.
+func TestValidate_MaxInactiveRevisions_AboveMaxWarns(t *testing.T) {
+	m := validManifest()
+	m.MaxInactiveRevisions = 250
+	r := Validate(m)
+	if r.HasErrors() {
+		t.Fatalf("max_inactive_revisions=250 should warn, not error: %v", r.Errors)
+	}
+	if len(r.Warnings) == 0 {
+		t.Fatal("expected a warning for max_inactive_revisions=250")
+	}
+}
+
+// Values in 0..100 are accepted silently. 0 and 100 are the documented
+// boundaries; neither should trigger anything.
+func TestValidate_MaxInactiveRevisions_InRange(t *testing.T) {
+	for _, n := range []int{0, 1, 100} {
+		m := validManifest()
+		m.MaxInactiveRevisions = n
+		r := Validate(m)
+		if r.HasErrors() || len(r.Warnings) > 0 {
+			t.Errorf("max_inactive_revisions=%d should be silent, got errs=%v warns=%v", n, r.Errors, r.Warnings)
+		}
+	}
+}

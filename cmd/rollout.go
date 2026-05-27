@@ -191,10 +191,10 @@ func renderRolloutPreview(p rolloutPlan) string {
 	} else {
 		b.WriteString("  since:    " + p.BaseTag + "\n")
 	}
-	b.WriteString(fmt.Sprintf("  build:    %s\n", enabledWord(!p.NoBuild)))
-	b.WriteString(fmt.Sprintf("  secrets:  %s\n", enabledWord(!p.NoSecretSync)))
-	b.WriteString(fmt.Sprintf("  push:     %s\n", enabledWord(!p.NoPush)))
-	b.WriteString(fmt.Sprintf("  verify:   %s\n", enabledWord(!p.NoVersionWait)))
+	fmt.Fprintf(&b, "  build:    %s\n", enabledWord(!p.NoBuild))
+	fmt.Fprintf(&b, "  secrets:  %s\n", enabledWord(!p.NoSecretSync))
+	fmt.Fprintf(&b, "  push:     %s\n", enabledWord(!p.NoPush))
+	fmt.Fprintf(&b, "  verify:   %s\n", enabledWord(!p.NoVersionWait))
 	b.WriteString("\nchangelog:\n")
 	for line := range strings.SplitSeq(p.Changelog, "\n") {
 		b.WriteString("  " + line + "\n")
