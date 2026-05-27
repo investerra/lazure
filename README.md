@@ -281,6 +281,76 @@ lazure schema                       # writes <dir>/deploy.schema.json
 lazure schema -                     # to stdout (pipe to validators / jq)
 ```
 
+## Tags
+
+Azure resource tags (top-level key/value labels used for cost allocation,
+ownership, Azure Policy, automation hints) are declared under `app.tags`
+in `deploy.yml`:
+
+```yaml
+app:
+  name: my-service
+  location: switzerlandnorth
+  resource_group: "{{ .Vars.resource_group }}"
+  managed_environment_id: "{{ .Vars.managed_environment_id }}"
+  identity: "{{ .Vars.user_assigned_identity_id }}"
+  tags:
+    service: my-service
+    env: "{{ .Vars.app_env }}"        # per-env value
+    managed_by: lazure
+    cost_center: platform
+```
+
+Values are plain strings and accept the standard `{{ .Vars.x }}` templating,
+so you can derive per-env tags from your vars files.
+
+Lazure owns these tags on every deploy — anything in the live resource
+that isn't in `app.tags` is removed. If another system (Terraform,
+Azure Policy) is also stamping tags onto the same Container App, declare
+them all in `deploy.yml` to keep them, or stop the other system from
+touching that resource.
+
+## Ingress
+
+Azure rejects most combinations of `external`, `transport`, and `exposed_port`. Three combinations work:
+
+**External HTTP** — public on the internet, browser-reachable. Most common.
+
+```yaml
+ingress:
+  external: true
+  target_port: 8000
+  transport: http        # or http2 / auto
+  # NO exposed_port — Azure rejects it on non-TCP transports
+```
+
+**Internal TCP** — reachable only from within the same Container Apps managed environment. Use for service-to-service that's not HTTP.
+
+```yaml
+ingress:
+  external: false
+  target_port: 8000
+  exposed_port: 8000     # allowed (and effectively required) for TCP
+  transport: tcp
+```
+
+**Internal HTTP** — HTTP service reachable only from inside the managed env.
+
+```yaml
+ingress:
+  external: false
+  target_port: 8000
+  transport: http
+  # NO exposed_port
+```
+
+**What Azure rejects:**
+
+| external | transport | exposed_port | result |
+|----------|-----------|--------------|--------|
+| `true`   | `tcp`     | any          | `ContainerAppTcpRequiresVnet` — external TCP needs a VNet-attached managed env |
+| any      | `http` / `http2` / `auto` | set | Azure ignores or rejects `exposed_port` for non-TCP transports |
+
 ## Troubleshooting
 
 If something looks wrong, run **`lazure doctor`** first. It enumerates every file Lazure expects, every Azure permission it needs, and every per-env stage of the load pipeline, and tells you exactly what's missing or broken.
