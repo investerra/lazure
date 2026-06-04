@@ -130,9 +130,10 @@ func (c *ContainerAppsClient) PutAndWait(ctx context.Context, sub, rg, name stri
 
 // PutAndWaitPreservingExternalState creates or updates a container app
 // while carrying forward Azure-owned fields that Lazure intentionally
-// does not manage declaratively. Today that means ingress.customDomains:
-// domains and certificates are configured outside deploy.yml, but a
-// full Container App PUT must still include them or Azure removes them.
+// does not manage declaratively: ingress.customDomains (domains and
+// certificates configured outside deploy.yml) and workloadProfileName
+// (set by the environment in Terraform). A full Container App PUT must
+// still include these or Azure removes them.
 func (c *ContainerAppsClient) PutAndWaitPreservingExternalState(ctx context.Context, sub, rg, name string, body *azurearm.ContainerApp, live *azurearm.ContainerApp) (*azurearm.ContainerApp, error) {
 	preserveExternalState(body, live)
 
@@ -154,6 +155,12 @@ func (c *ContainerAppsClient) PutAndWaitPreservingExternalState(ctx context.Cont
 func preserveExternalState(body, live *azurearm.ContainerApp) {
 	if body == nil || live == nil {
 		return
+	}
+	// workloadProfileName is set by the environment (Terraform owns it),
+	// not by deploy.yml. Carry the live value forward so a full PUT does
+	// not strip it — independent of ingress, hence above the ingress guard.
+	if live.Properties.WorkloadProfileName != "" {
+		body.Properties.WorkloadProfileName = live.Properties.WorkloadProfileName
 	}
 	if body.Properties.Configuration.Ingress == nil || live.Properties.Configuration.Ingress == nil {
 		return

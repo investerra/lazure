@@ -44,6 +44,7 @@ type UserAssignedDetail struct {
 
 type ContainerAppProperties struct {
 	ManagedEnvironmentID string        `json:"managedEnvironmentId"`
+	WorkloadProfileName  string        `json:"workloadProfileName,omitempty"`
 	Configuration        Configuration `json:"configuration"`
 	Template             Template      `json:"template"`
 

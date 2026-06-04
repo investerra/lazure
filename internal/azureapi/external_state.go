@@ -20,7 +20,6 @@ var unsupportedLiveFieldRules = []liveFieldRule{
 	{path: "/properties/template/revisionSuffix", meaningful: meaningfulJSONValue},
 	{path: "/properties/template/serviceBinds", meaningful: meaningfulJSONValue},
 	{path: "/properties/template/terminationGracePeriodSeconds", meaningful: meaningfulJSONValue},
-	{path: "/properties/workloadProfileName", meaningful: meaningfulJSONValue},
 }
 
 type ContainerAppFieldMapping struct {
@@ -62,6 +61,7 @@ func ContainerAppFieldMappingRules() ContainerAppFieldMapping {
 		},
 		PreservedExternal: []string{
 			"/properties/configuration/ingress/customDomains",
+			"/properties/workloadProfileName",
 		},
 		Ignored: []string{
 			"/id",
