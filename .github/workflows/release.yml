@@ -45,3 +45,8 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Move 'latest' tag to this release
+        run: |
+          git tag -f latest
+          git push -f origin latest
