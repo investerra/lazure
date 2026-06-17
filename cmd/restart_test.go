@@ -53,14 +53,40 @@ func TestReplicaAllContainersReady(t *testing.T) {
 }
 
 func TestReplicaAllContainersReady_InitContainers(t *testing.T) {
-	r := azurearm.Replica{
+	// An init container that is neither Ready nor Terminated is still in
+	// progress (e.g. running migrations) — the replica is not ready yet.
+	pending := azurearm.Replica{
 		Properties: azurearm.ReplicaProperties{
 			Containers:     []azurearm.ReplicaContainer{{Ready: true}},
 			InitContainers: []azurearm.ReplicaContainer{{Ready: false}},
 		},
 	}
-	if replicaAllContainersReady(r) {
-		t.Error("should be false — init container not ready")
+	if replicaAllContainersReady(pending) {
+		t.Error("should be false — init container still in progress")
+	}
+
+	// A SUCCESSFUL init container reports ready=false, runningState=Terminated
+	// (it ran once and exited). With the main container ready, the replica is
+	// ready — gating init on Ready here is the bug that hung `deploy --wait`.
+	completed := azurearm.Replica{
+		Properties: azurearm.ReplicaProperties{
+			Containers:     []azurearm.ReplicaContainer{{Ready: true}},
+			InitContainers: []azurearm.ReplicaContainer{{Ready: false, RunningState: "Terminated"}},
+		},
+	}
+	if !replicaAllContainersReady(completed) {
+		t.Error("should be true — init terminated (completed) and main container ready")
+	}
+
+	// Init terminated but the main container not yet ready → still waiting.
+	initDoneAppNotReady := azurearm.Replica{
+		Properties: azurearm.ReplicaProperties{
+			Containers:     []azurearm.ReplicaContainer{{Ready: false}},
+			InitContainers: []azurearm.ReplicaContainer{{Ready: false, RunningState: "Terminated"}},
+		},
+	}
+	if replicaAllContainersReady(initDoneAppNotReady) {
+		t.Error("should be false — main container not ready")
 	}
 }
 
