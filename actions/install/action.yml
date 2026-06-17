@@ -3,7 +3,7 @@ description: Download and cache a lazure binary from GitHub releases.
 
 inputs:
   version:
-    description: Lazure release version to install, for example v0.7.0.
+    description: Lazure release version to install (e.g. v0.7.0), or "latest" for the newest release.
     required: true
   github-token:
     description: Token with read access to investerra/lazure release assets.
@@ -13,16 +13,28 @@ inputs:
 runs:
   using: composite
   steps:
+    # Resolve "latest" (or a bare version) to a concrete vX.Y.Z tag, so the cache
+    # key below tracks the actual version — a moved "latest" busts the cache
+    # instead of serving a stale binary.
+    - name: Resolve version
+      id: resolve
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        INPUT_VERSION: ${{ inputs.version }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: bash "$ACTION_PATH/../_lib/resolve-lazure-version.sh"
+
     - name: Cache lazure
       uses: actions/cache@v4
       with:
-        path: ${{ runner.tool_cache }}/lazure/${{ inputs.version }}/${{ runner.os }}-${{ runner.arch }}
-        key: lazure-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}
+        path: ${{ runner.tool_cache }}/lazure/${{ steps.resolve.outputs.version }}/${{ runner.os }}-${{ runner.arch }}
+        key: lazure-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.version }}
 
     - name: Install lazure
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}
-        LAZURE_VERSION: ${{ inputs.version }}
+        LAZURE_VERSION: ${{ steps.resolve.outputs.version }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: bash "$ACTION_PATH/../_lib/install-lazure.sh"
