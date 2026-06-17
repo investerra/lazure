@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/urfave/cli/v3"
@@ -216,8 +217,8 @@ func restartComplete(current []azurearm.Replica, baseline map[string]struct{}) (
 	return done, status
 }
 
-// replicaAllContainersReady is true iff every container + init container
-// in the replica has Ready=true. Returns false on an empty replica
+// replicaAllContainersReady is true iff every main container has Ready=true
+// AND every init container has finished. Returns false on an empty replica
 // (shouldn't happen but defensive).
 func replicaAllContainersReady(r azurearm.Replica) bool {
 	if len(r.Properties.Containers) == 0 {
@@ -229,13 +230,28 @@ func replicaAllContainersReady(r azurearm.Replica) bool {
 		}
 	}
 	for _, cnt := range r.Properties.InitContainers {
-		// Init containers complete — they're Ready once they've run to
-		// completion. If they never became Ready, something's wrong.
-		if !cnt.Ready {
+		if !initContainerFinished(cnt) {
 			return false
 		}
 	}
 	return true
+}
+
+// initContainerFinished reports whether an init container has done its job.
+//
+// Init containers run once and exit, so a SUCCESSFUL init reports
+// ready=false, started=false, runningState=Terminated — it is never "Ready"
+// in the running-container sense. Gating init on Ready (as the main
+// containers are gated) therefore makes `deploy --wait` hang until timeout
+// for any app with an init container, even though the deploy succeeded.
+//
+// Treat init as finished once it has Terminated (or, defensively, if Azure
+// ever does report it Ready). A still-pending or in-progress init stays
+// non-Terminated, so we keep waiting for it; and a failed init won't bring
+// the main containers Ready, so the caller still won't report the replica
+// ready.
+func initContainerFinished(c azurearm.ReplicaContainer) bool {
+	return c.Ready || strings.EqualFold(c.RunningState, "Terminated")
 }
 
 // ---------- revision-ready wait (shared by deploy + rollback) ----------
