@@ -36,10 +36,6 @@ func WaitForDeployFlags() []cli.Flag {
 // the app's version endpoint until the reported commit matches the
 // expected SHA.
 func WaitForDeploy(ctx context.Context, c *cli.Command) error {
-	expected := firstNonEmpty(c.String("expected-sha"), os.Getenv("EXPECTED_SHA"), currentGitSHA(ctx))
-	if expected == "" {
-		return errs.Usage(errs.New("wait-for-deploy: expected SHA is required (pass --expected-sha, set EXPECTED_SHA, or run in a git repo)"))
-	}
 	t, err := loadAzureTarget(c, "wait-for-deploy")
 	if err != nil {
 		return err
@@ -54,13 +50,35 @@ func WaitForDeploy(ctx context.Context, c *cli.Command) error {
 		return errs.System(errs.Wrap(err, "wait-for-deploy: get app"))
 	}
 
+	timeout := c.Duration("timeout")
+	interval := c.Duration("interval")
+
+	// Internal-ingress apps aren't reachable over HTTPS from wherever lazure
+	// runs: their hostname is <app>.internal.<domain>, resolvable only inside
+	// the environment, so polling /version would always time out. Verify via
+	// ARM revision health instead — confirms the new revision came up, just
+	// without the commit-level check (we can't read /version from here).
+	ing := app.Properties.Configuration.Ingress
+	if ing == nil || !ing.External {
+		fmt.Fprintf(os.Stdout, "app %q has internal ingress — verifying revision health via ARM (HTTP /version not reachable from here)\n", t.Name)
+		if err := waitForRevisionHealthy(ctx, t, timeout, interval, os.Stdout); err != nil {
+			return errs.WithCode(errs.CodeTask, err)
+		}
+		fmt.Fprintln(os.Stdout, "deployment ready")
+		return nil
+	}
+
+	expected := firstNonEmpty(c.String("expected-sha"), os.Getenv("EXPECTED_SHA"), currentGitSHA(ctx))
+	if expected == "" {
+		return errs.Usage(errs.New("wait-for-deploy: expected SHA is required (pass --expected-sha, set EXPECTED_SHA, or run in a git repo)"))
+	}
 	u, err := deploymentVersionURL(app, c.String("path"))
 	if err != nil {
 		return errs.Usage(errs.Wrap(err, "wait-for-deploy"))
 	}
 	fmt.Fprintf(os.Stdout, "Expected version: %s\n", expected)
 	fmt.Fprintf(os.Stdout, "Polling: %s\n", u)
-	if err := waitForDeploymentVersion(ctx, u, expected, c.String("field"), c.Duration("timeout"), c.Duration("interval"), os.Stdout); err != nil {
+	if err := waitForDeploymentVersion(ctx, u, expected, c.String("field"), timeout, interval, os.Stdout); err != nil {
 		return errs.WithCode(errs.CodeTask, err)
 	}
 	fmt.Fprintln(os.Stdout, "deployment ready")
@@ -72,18 +90,24 @@ func deploymentVersionURL(app *azurearm.ContainerApp, path string) (string, erro
 		return "", errs.New("no ingress configured")
 	}
 	ing := app.Properties.Configuration.Ingress
-	host := ""
-	for _, d := range ing.CustomDomains {
-		if strings.TrimSpace(d.Name) != "" {
-			host = strings.TrimSpace(d.Name)
-			break
+	// Prefer the latest revision's own FQDN: it routes straight to the newly
+	// created revision, so /version matches as soon as THAT revision is
+	// healthy — without waiting for traffic to shift off the old one. Falls
+	// back to a custom domain, then the app's stable ingress FQDN.
+	host := strings.TrimSpace(app.Properties.LatestRevisionFqdn)
+	if host == "" {
+		for _, d := range ing.CustomDomains {
+			if strings.TrimSpace(d.Name) != "" {
+				host = strings.TrimSpace(d.Name)
+				break
+			}
 		}
 	}
 	if host == "" {
 		host = strings.TrimSpace(ing.FQDN)
 	}
 	if host == "" {
-		return "", errs.New("ingress has no custom domain or FQDN")
+		return "", errs.New("ingress has no revision FQDN, custom domain, or FQDN")
 	}
 	if path == "" {
 		path = "/version"
@@ -142,6 +166,82 @@ func waitForDeploymentVersion(ctx context.Context, endpoint, expected, field str
 		}
 		attempt++
 	}
+}
+
+// waitForRevisionHealthy polls ARM until the app's latest-created revision
+// reports Healthy + Running, or the timeout elapses. Used for internal-ingress
+// apps where the HTTP /version endpoint isn't reachable from where lazure runs,
+// so the commit can't be verified — revision health is the closest signal.
+func waitForRevisionHealthy(ctx context.Context, t *azureTarget, timeout, interval time.Duration, out io.Writer) error {
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	attempt := 1
+	var last string
+	for {
+		if got, ready := latestRevisionState(waitCtx, t); got != "" {
+			last = got
+			if out != nil {
+				fmt.Fprintf(out, "attempt %d: %s\n", attempt, got)
+			}
+			if ready {
+				return nil
+			}
+		} else if out != nil {
+			fmt.Fprintf(out, "attempt %d: latest revision not reported yet\n", attempt)
+		}
+		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+			return errs.Errorf("timed out after %s waiting for latest revision to become Healthy/Running (last: %s)",
+				timeout, stringOr(last, "none"))
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-waitCtx.Done():
+			timer.Stop()
+			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+				return errs.Errorf("timed out after %s waiting for latest revision to become Healthy/Running (last: %s)",
+					timeout, stringOr(last, "none"))
+			}
+			return errs.Wrap(waitCtx.Err(), "wait-for-deploy cancelled")
+		case <-timer.C:
+		}
+		attempt++
+	}
+}
+
+// latestRevisionState returns a human-readable state line for the app's
+// latest-created revision and whether it is Healthy + Running. An empty string
+// means the revision couldn't be resolved this attempt (transient).
+func latestRevisionState(ctx context.Context, t *azureTarget) (string, bool) {
+	app, err := t.CA.Get(ctx, t.Sub, t.RG, t.Name)
+	if err != nil {
+		return err.Error(), false
+	}
+	target := app.Properties.LatestRevisionName
+	if target == "" {
+		return "", false
+	}
+	revs, err := t.CA.ListRevisions(ctx, t.Sub, t.RG, t.Name)
+	if err != nil {
+		return err.Error(), false
+	}
+	for _, r := range revs {
+		if r.Name != target {
+			continue
+		}
+		health := stringOr(r.Properties.HealthState, "?")
+		running := stringOr(r.Properties.RunningState, "?")
+		ready := strings.EqualFold(r.Properties.HealthState, "Healthy") &&
+			strings.EqualFold(r.Properties.RunningState, "Running")
+		return fmt.Sprintf("%s health=%s running=%s", r.Name, health, running), ready
+	}
+	return fmt.Sprintf("%s (not in revision list yet)", target), false
 }
 
 func fetchVersionField(ctx context.Context, endpoint, field string) (string, error) {
