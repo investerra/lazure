@@ -165,8 +165,11 @@ func pickContainer(r azurearm.Replica, name string) (azurearm.ReplicaContainer, 
 // ---------- line formatting ----------
 
 // formatLogLine renders one ACA log line for display. Each raw line
-// from Azure looks like `<RFC3339 timestamp> <payload>` where payload
-// is either a structured JSON blob or a free-form text line.
+// from Azure looks like `<RFC3339 timestamp> <stream> <tag> <payload>`
+// — the middle segment is the Docker/CRI multiplexed-log prefix
+// (stream is stdout|stderr, tag is F for a full line or P for a
+// partial one split across writes) — where payload is either a
+// structured JSON blob or a free-form text line.
 //
 // Behavior:
 //   - raw=true: return the line unchanged (passthrough for piping / debug).
@@ -181,8 +184,9 @@ func formatLogLine(line string, raw, color bool) string {
 		return line
 	}
 	acaTS, rest := splitACATimestamp(line)
+	_, payloadStr := splitStreamTag(rest)
 	var payload map[string]any
-	if err := json.Unmarshal([]byte(rest), &payload); err != nil || len(payload) == 0 {
+	if err := json.Unmarshal([]byte(payloadStr), &payload); err != nil || len(payload) == 0 {
 		return line
 	}
 	return renderJSONLog(payload, acaTS, color)
@@ -203,6 +207,27 @@ func splitACATimestamp(line string) (ts, rest string) {
 		return "", line
 	}
 	return candidate, line[i+1:]
+}
+
+// acaStreamTags are the Docker/CRI multiplexed-log tags Azure inserts
+// between the stream name and the payload: F for a complete line, P
+// for a partial one (split across writes, rejoined by the log
+// backend). We don't currently distinguish them — both precede a
+// payload we want to parse the same way.
+var acaStreamPrefixes = []string{"stdout F ", "stdout P ", "stderr F ", "stderr P "}
+
+// splitStreamTag strips the "<stream> <tag> " prefix Azure inserts
+// between the timestamp and the actual payload (e.g. "stdout F
+// {...}"), returning the stream name ("stdout"/"stderr", or "" if no
+// such prefix was found — some payloads arrive without one) and the
+// remaining text.
+func splitStreamTag(rest string) (stream, payload string) {
+	for _, prefix := range acaStreamPrefixes {
+		if strings.HasPrefix(rest, prefix) {
+			return strings.SplitN(prefix, " ", 2)[0], rest[len(prefix):]
+		}
+	}
+	return "", rest
 }
 
 // jsonLogFields is the set of keys formatLogLine promotes out of the

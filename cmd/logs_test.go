@@ -252,6 +252,47 @@ func TestFormatLogLine_LevelCasing(t *testing.T) {
 	}
 }
 
+// TestFormatLogLine_StdoutStreamTag reproduces the real Azure Container
+// Apps wire format: "<timestamp> stdout F {json}" — the Docker/CRI
+// multiplexed-log prefix between the timestamp and payload. Before
+// splitStreamTag existed, this "stdout F " fragment made the payload
+// fail JSON parsing and the whole line fell through unformatted.
+func TestFormatLogLine_StdoutStreamTag(t *testing.T) {
+	in := `2026-07-09T14:31:26.8759523Z stdout F {"logger": "uvicorn.access", "level": "info", "timestamp": "2026-07-09T14:31:26.875802Z", "message": "GET /health 200"}`
+	got := formatLogLine(in, false, false)
+	for _, want := range []string{"2026-07-09T14:31:26.875802Z", "INFO", "uvicorn.access", "GET /health 200"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+	if strings.Contains(got, "stdout F") {
+		t.Errorf("stream tag leaked into formatted output: %q", got)
+	}
+}
+
+func TestFormatLogLine_StderrPartialStreamTag(t *testing.T) {
+	in := `2026-07-09T14:31:26.8759523Z stderr P {"level": "error", "message": "boom"}`
+	got := formatLogLine(in, false, false)
+	if !strings.Contains(got, "ERROR") || !strings.Contains(got, "boom") {
+		t.Errorf("got = %q", got)
+	}
+}
+
+func TestSplitStreamTag(t *testing.T) {
+	cases := []struct{ in, wantStream, wantPayload string }{
+		{`stdout F {"a":1}`, "stdout", `{"a":1}`},
+		{`stderr P partial line`, "stderr", "partial line"},
+		{`{"a":1}`, "", `{"a":1}`}, // no prefix present
+		{"plain text, no tag", "", "plain text, no tag"},
+	}
+	for _, tc := range cases {
+		stream, payload := splitStreamTag(tc.in)
+		if stream != tc.wantStream || payload != tc.wantPayload {
+			t.Errorf("splitStreamTag(%q) = (%q, %q), want (%q, %q)", tc.in, stream, payload, tc.wantStream, tc.wantPayload)
+		}
+	}
+}
+
 func TestFormatLogLine_NoACATimestamp(t *testing.T) {
 	// Some code paths may strip the ACA prefix upstream; payload is JSON.
 	in := `{"level":"info","message":"hi"}`
