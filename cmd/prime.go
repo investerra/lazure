@@ -133,11 +133,12 @@ var (
 	prereqSops      = "`.sops.yaml` config in the project root and an age/PGP key available on the workstation (env var `SOPS_AGE_KEY_FILE` or `~/.config/sops/age/keys.txt`)."
 	prereqEditor    = "`$EDITOR` (or `$VISUAL` for `secrets edit`) set to a launcher that exits non-zero on failure."
 
-	depAzureARM = "Azure ARM REST API (network access to `management.azure.com`)."
-	depSops     = "`sops` binary on PATH."
-	depDocker   = "`docker` binary on PATH; running docker daemon."
-	depAzCLI    = "`az` CLI binary on PATH (lazure shells out for this command)."
-	depGit      = "`git` binary on PATH."
+	depAzureARM          = "Azure ARM REST API (network access to `management.azure.com`)."
+	depAzureLogAnalytics = "Azure Log Analytics query API (network access to `api.loganalytics.io`); the app's managed environment must have `appLogsConfiguration.destination: log-analytics` configured."
+	depSops              = "`sops` binary on PATH."
+	depDocker            = "`docker` binary on PATH; running docker daemon."
+	depAzCLI             = "`az` CLI binary on PATH (lazure shells out for this command)."
+	depGit               = "`git` binary on PATH."
 )
 
 var commandMetadata = map[string]commandMeta{
@@ -204,9 +205,9 @@ var commandMetadata = map[string]commandMeta{
 		dependencies:  []string{depAzureARM},
 	},
 	"lazure logs": {
-		useCase:       "view or tail container stdout/stderr for the running revision.",
+		useCase:       "view or tail container stdout/stderr for the running revision (`--type console`, default), or platform-level events like image pulls, probe failures, and CrashLoopBackOff (`--type system`, queries the app's Log Analytics workspace). `--container` selects a specific main or init container for console logs.",
 		prerequisites: []string{prereqAzureAuth, prereqAppLive},
-		dependencies:  []string{depAzureARM},
+		dependencies:  []string{depAzureARM, depAzureLogAnalytics + " (only for --type system)"},
 	},
 	"lazure revisions": {
 		useCase:       "list past revisions and their traffic weights — useful before a rollback.",

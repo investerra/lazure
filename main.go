@@ -278,11 +278,18 @@ It includes the latest revision, running state, network address, replicas, volum
 				Description: `Logs reads recent container output from Azure.
 Use it to check startup errors, health checks, requests, and application messages without opening the Azure portal.
 
+--type console (default) streams app stdout/stderr. --type system queries the app's
+Log Analytics workspace for platform-level events instead — image pulls, probe
+failures, OOM kills, CrashLoopBackOff — for when the app never logged anything
+because it never got that far.
+
 Examples:
   lazure logs dev                         last 20 lines, exit
   lazure logs dev --follow                tail live (Ctrl-C to stop)
   lazure logs dev --tail=100              more history before exit
   lazure logs dev --container=tasks       pick a non-default container
+  lazure logs dev --container=init        console logs of an init container
+  lazure logs dev --type=system --follow  platform events (crashloop, image pulls)
   lazure logs dev --raw                   no JSON parsing / coloring`,
 			},
 			{

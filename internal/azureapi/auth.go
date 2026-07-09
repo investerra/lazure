@@ -21,8 +21,9 @@ import (
 // Tokens are cached per scope; requesting different scopes triggers
 // separate token fetches.
 const (
-	ScopeManagement = "https://management.azure.com/.default"
-	ScopeKeyVault   = "https://vault.azure.net/.default"
+	ScopeManagement   = "https://management.azure.com/.default"
+	ScopeKeyVault     = "https://vault.azure.net/.default"
+	ScopeLogAnalytics = "https://api.loganalytics.io/.default"
 )
 
 // tokenRefreshBuffer is how far in advance of the real expiry we treat
@@ -118,4 +119,10 @@ func (p *TokenProvider) Management(ctx context.Context) (string, error) {
 // secrets view/sync/verify against the vault REST API.
 func (p *TokenProvider) KeyVault(ctx context.Context) (string, error) {
 	return p.Token(ctx, ScopeKeyVault)
+}
+
+// LogAnalytics is a convenience for Token(ctx, ScopeLogAnalytics) —
+// used by `lazure logs --type system` to query the workspace REST API.
+func (p *TokenProvider) LogAnalytics(ctx context.Context) (string, error) {
+	return p.Token(ctx, ScopeLogAnalytics)
 }

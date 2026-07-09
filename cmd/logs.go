@@ -22,11 +22,12 @@ import (
 // LogsFlags are the flags for `lazure logs`.
 func LogsFlags() []cli.Flag {
 	return []cli.Flag{
-		&cli.StringFlag{Name: "container", Usage: "container name (default: first non-init container)"},
+		&cli.StringFlag{Name: "type", Value: "console", Usage: "log source: console (app stdout/stderr) | system (platform events: image pulls, probe failures, restarts)"},
+		&cli.StringFlag{Name: "container", Usage: "container name (default: first non-init container; ignored for --type system)"},
 		&cli.BoolFlag{Name: "follow", Aliases: []string{"f"}, Usage: "stream new lines as they arrive"},
-		&cli.IntFlag{Name: "tail", Value: 20, Usage: "number of historical lines before live data (max 300)"},
+		&cli.IntFlag{Name: "tail", Value: 20, Usage: "number of historical lines before live data (max 300 for console; system has no hard max)"},
 		&cli.StringFlag{Name: "revision", Usage: "target revision (default: current latestRevisionName)"},
-		&cli.StringFlag{Name: "replica", Usage: "target replica (default: first returned)"},
+		&cli.StringFlag{Name: "replica", Usage: "target replica (default: first returned for console; all replicas for system)"},
 		&cli.BoolFlag{Name: "raw", Usage: "print raw lines without JSON parsing or color"},
 		&cli.BoolFlag{Name: "no-color", Usage: "disable ANSI colors (also honored via NO_COLOR env)"},
 	}
@@ -41,6 +42,10 @@ func LogsFlags() []cli.Flag {
 // cleanly, and returns nil. StreamLogs surfaces ctx.Canceled which we
 // swallow here since it's the expected shutdown path.
 func Logs(ctx context.Context, c *cli.Command) error {
+	logType := c.String("type")
+	if logType != "console" && logType != "system" {
+		return errs.Usage(errs.Errorf("logs: invalid --type %q (want console|system)", logType))
+	}
 	container := c.String("container")
 	follow := c.Bool("follow")
 	tail := c.Int("tail")
@@ -54,33 +59,50 @@ func Logs(ctx context.Context, c *cli.Command) error {
 		return err
 	}
 	slog.Debug("logs: start",
-		"env", t.Env, "container", container, "follow", follow,
+		"env", t.Env, "type", logType, "container", container, "follow", follow,
 		"tail", tail, "revision", rev, "replica", replica,
 		"raw", raw, "color", color)
 
-	if rev == "" {
+	// System logs default to "all revisions" — a crashlooping old
+	// revision is exactly the kind of thing you'd query them for.
+	// Console logs need a single revision to pick a logStreamEndpoint.
+	if rev == "" && logType == "console" {
 		rev, err = resolveLatestRevision(ctx, t, "logs")
 		if err != nil {
 			return err
 		}
 	}
 
-	slog.Info("streaming logs",
-		"app", t.Name, "env", t.Env, "revision", rev,
-		"replica", replica, "container", container, "follow", follow, "tail", tail)
-
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	err = streamContainerLogs(ctx, t.CA, t.Sub, t.RG, t.Name, rev, streamLogsOptions{
-		Container: container,
-		Replica:   replica,
-		Follow:    follow,
-		Tail:      tail,
-		Raw:       raw,
-		Color:     color,
-		Out:       os.Stdout,
-	})
+	if logType == "system" {
+		slog.Info("streaming system logs",
+			"app", t.Name, "env", t.Env, "revision", rev,
+			"replica", replica, "follow", follow, "tail", tail)
+		err = streamSystemLogs(ctx, t, streamSystemLogsOptions{
+			Revision: rev,
+			Replica:  replica,
+			Follow:   follow,
+			Tail:     tail,
+			Raw:      raw,
+			Color:    color,
+			Out:      os.Stdout,
+		})
+	} else {
+		slog.Info("streaming logs",
+			"app", t.Name, "env", t.Env, "revision", rev,
+			"replica", replica, "container", container, "follow", follow, "tail", tail)
+		err = streamContainerLogs(ctx, t.CA, t.Sub, t.RG, t.Name, rev, streamLogsOptions{
+			Container: container,
+			Replica:   replica,
+			Follow:    follow,
+			Tail:      tail,
+			Raw:       raw,
+			Color:     color,
+			Out:       os.Stdout,
+		})
+	}
 	if errors.Is(err, context.Canceled) {
 		slog.Debug("logs: stream cancelled (Ctrl-C or parent shutdown)")
 		return nil

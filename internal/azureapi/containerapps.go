@@ -35,6 +35,11 @@ const armBaseURL = "https://management.azure.com"
 // container app doesn't exist (e.g. before the first deploy).
 var ErrContainerAppNotFound = errors.New("containerapps: not found")
 
+// ErrManagedEnvironmentNotFound is returned by GetManagedEnvironment
+// when app.managed_environment_id points at a resource that doesn't
+// exist (wrong id, wrong subscription, or deleted environment).
+var ErrManagedEnvironmentNotFound = errors.New("containerapps: managed environment not found")
+
 // ContainerAppsClient wraps the ARM Container App resource endpoints.
 type ContainerAppsClient struct {
 	base     string
@@ -405,6 +410,36 @@ func (c *ContainerAppsClient) ListReplicas(ctx context.Context, sub, rg, name, r
 	}
 	slog.Debug("containerapps: list replicas done", "count", len(body.Value))
 	return body.Value, nil
+}
+
+// GetManagedEnvironment fetches the managed environment resource that
+// backs a container app. resourceID is the full ARM id (e.g.
+// app.managed_environment_id from the manifest) — used as-is rather
+// than composed from sub/rg/name since the environment can live in a
+// different resource group than the app.
+//
+// Used by `lazure logs --type system` to resolve the Log Analytics
+// workspace the app's system logs are written to.
+func (c *ContainerAppsClient) GetManagedEnvironment(ctx context.Context, resourceID string) (*azurearm.ManagedEnvironment, error) {
+	r, err := c.armRequest(ctx)
+	if err != nil {
+		return nil, err
+	}
+	url := c.base + resourceID
+	slog.Debug("containerapps: GET managed environment", "url", url)
+
+	var env azurearm.ManagedEnvironment
+	resp, err := r.SetSuccessResult(&env).Get(url)
+	if err != nil {
+		return nil, errs.Wrapf(err, "containerapps: get managed environment %s", resourceID)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrManagedEnvironmentNotFound
+	}
+	if !resp.IsSuccessState() {
+		return nil, errs.Errorf("containerapps: get managed environment %s: %s", resourceID, resp.Status)
+	}
+	return &env, nil
 }
 
 // RestartRevision triggers a restart of a specific revision. Fire-and-
