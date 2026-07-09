@@ -268,6 +268,26 @@ func TestPrintStatusTable_ReplicasVolumesNetworkRegistry(t *testing.T) {
 	}
 }
 
+func TestFormatReplicaContainers_CrashLoopAndInit(t *testing.T) {
+	containers := []azurearm.ReplicaContainer{{
+		Name: "app", Ready: false, RestartCount: 6,
+		RunningState: "Waiting", RunningStateDetails: "CrashLoopBackOff",
+	}}
+	initContainers := []azurearm.ReplicaContainer{{
+		Name: "init", Ready: false, RestartCount: 3,
+		RunningState: "Waiting", RunningStateDetails: "CrashLoopBackOff",
+	}}
+	got := formatReplicaContainers(containers, initContainers)
+	for _, want := range []string{
+		"app:not-ready/restarts=6 (CrashLoopBackOff)",
+		"init (init):not-ready/restarts=3 (CrashLoopBackOff)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("formatReplicaContainers() = %q, missing %q", got, want)
+		}
+	}
+}
+
 func TestPrintStatusJSON_IsValidAndComplete(t *testing.T) {
 	app := &azurearm.ContainerApp{
 		Name:     "api-server",

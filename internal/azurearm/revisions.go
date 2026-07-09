@@ -47,12 +47,13 @@ type ReplicaProperties struct {
 // switched to wss:// for interactive exec sessions (see az containerapp
 // exec). Both are read-only and populated by Azure on GET.
 type ReplicaContainer struct {
-	Name              string `json:"name"`
-	ContainerID       string `json:"containerId,omitempty"`
-	Ready             bool   `json:"ready,omitempty"`
-	Started           bool   `json:"started,omitempty"`
-	RestartCount      int    `json:"restartCount,omitempty"`
-	RunningState      string `json:"runningState,omitempty"`
-	LogStreamEndpoint string `json:"logStreamEndpoint,omitempty"`
-	ExecEndpoint      string `json:"execEndpoint,omitempty"`
+	Name                string `json:"name"`
+	ContainerID         string `json:"containerId,omitempty"`
+	Ready               bool   `json:"ready,omitempty"`
+	Started             bool   `json:"started,omitempty"`
+	RestartCount        int    `json:"restartCount,omitempty"`
+	RunningState        string `json:"runningState,omitempty"`
+	RunningStateDetails string `json:"runningStateDetails,omitempty"`
+	LogStreamEndpoint   string `json:"logStreamEndpoint,omitempty"`
+	ExecEndpoint        string `json:"execEndpoint,omitempty"`
 }

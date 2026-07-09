@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
+	"sort"
+	"strconv"
 	"text/tabwriter"
 	"time"
 
@@ -42,6 +45,7 @@ func Revisions(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		return errs.System(errs.Wrap(err, "revisions: list"))
 	}
+	sortRevisionsNaturalDesc(revs)
 	if limit > 0 && len(revs) > limit {
 		revs = revs[:limit]
 	}
@@ -89,6 +93,39 @@ func printRevisionsTable(env, app string, revs []azurearm.Revision) error {
 		)
 	}
 	return tw.Flush()
+}
+
+// revisionIDChunks splits a revision name into alternating non-digit
+// and digit runs, e.g. "app--rev10" -> ["app--rev", "10"]. Used to
+// compare embedded numbers by value instead of lexically.
+var revisionIDChunks = regexp.MustCompile(`\d+|\D+`)
+
+// sortRevisionsNaturalDesc sorts revisions by name using a natural
+// sort (embedded numbers compared by value, not lexically) and
+// reverses the result, so e.g. "app--rev10" lists before "app--rev2",
+// and the highest revision id comes first.
+func sortRevisionsNaturalDesc(revs []azurearm.Revision) {
+	sort.Slice(revs, func(i, j int) bool {
+		return naturalLess(revs[j].Name, revs[i].Name)
+	})
+}
+
+// naturalLess reports whether a sorts before b under natural order.
+func naturalLess(a, b string) bool {
+	ac := revisionIDChunks.FindAllString(a, -1)
+	bc := revisionIDChunks.FindAllString(b, -1)
+	for i := 0; i < len(ac) && i < len(bc); i++ {
+		if ac[i] == bc[i] {
+			continue
+		}
+		an, aErr := strconv.Atoi(ac[i])
+		bn, bErr := strconv.Atoi(bc[i])
+		if aErr == nil && bErr == nil {
+			return an < bn
+		}
+		return ac[i] < bc[i]
+	}
+	return len(ac) < len(bc)
 }
 
 // findLatest returns the name of the revision currently serving the

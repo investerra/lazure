@@ -125,6 +125,23 @@ func TestPrintRevisionsJSON(t *testing.T) {
 	}
 }
 
+func TestSortRevisionsNaturalDesc(t *testing.T) {
+	revs := []azurearm.Revision{
+		{Name: "app--rev2"},
+		{Name: "app--rev10"},
+		{Name: "app--rev1"},
+	}
+	sortRevisionsNaturalDesc(revs)
+	got := []string{revs[0].Name, revs[1].Name, revs[2].Name}
+	want := []string{"app--rev10", "app--rev2", "app--rev1"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("sortRevisionsNaturalDesc order = %v, want %v", got, want)
+			break
+		}
+	}
+}
+
 func TestStringOr(t *testing.T) {
 	if got := stringOr("hello", "fallback"); got != "hello" {
 		t.Errorf("stringOr nonempty = %q, want 'hello'", got)

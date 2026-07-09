@@ -311,7 +311,7 @@ func printReplicasSection(app *azurearm.ContainerApp, revs []azurearm.Revision, 
 			fmt.Printf("      - %s running=%s containers=%s\n",
 				replica.Name,
 				stringOr(replica.Properties.RunningState, "-"),
-				formatReplicaContainers(replica.Properties.Containers))
+				formatReplicaContainers(replica.Properties.Containers, replica.Properties.InitContainers))
 		}
 	}
 }
@@ -415,22 +415,39 @@ func readyReplicaCount(replicas []azurearm.Replica) int {
 	return ready
 }
 
-func formatReplicaContainers(containers []azurearm.ReplicaContainer) string {
-	if len(containers) == 0 {
+// formatReplicaContainers renders main and init containers as a single
+// "name:state" list. Init containers are suffixed "(init)" since they
+// share the ready/not-ready vocabulary but exit after running once
+// (see initContainerFinished) — without the suffix a healthy
+// terminated init container is indistinguishable from a stuck one.
+// RunningStateDetails (e.g. "CrashLoopBackOff") is surfaced whenever
+// Azure reports it, for either kind of container.
+func formatReplicaContainers(containers, initContainers []azurearm.ReplicaContainer) string {
+	if len(containers) == 0 && len(initContainers) == 0 {
 		return "-"
 	}
-	parts := make([]string, 0, len(containers))
+	parts := make([]string, 0, len(containers)+len(initContainers))
 	for _, c := range containers {
-		state := "not-ready"
-		if c.Ready {
-			state = "ready"
-		}
-		if c.RestartCount > 0 {
-			state += fmt.Sprintf("/restarts=%d", c.RestartCount)
-		}
-		parts = append(parts, displayName(c.Name)+":"+state)
+		parts = append(parts, formatReplicaContainer(c.Name, c))
+	}
+	for _, c := range initContainers {
+		parts = append(parts, formatReplicaContainer(c.Name+" (init)", c))
 	}
 	return strings.Join(parts, ", ")
+}
+
+func formatReplicaContainer(label string, c azurearm.ReplicaContainer) string {
+	state := "not-ready"
+	if c.Ready {
+		state = "ready"
+	}
+	if c.RestartCount > 0 {
+		state += fmt.Sprintf("/restarts=%d", c.RestartCount)
+	}
+	if c.RunningStateDetails != "" {
+		state += fmt.Sprintf(" (%s)", c.RunningStateDetails)
+	}
+	return displayName(label) + ":" + state
 }
 
 type statusVolumeMount struct {
