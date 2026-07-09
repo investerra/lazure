@@ -6,6 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+
 	"github.com/investerra/lazure/internal/azurearm"
 )
 
@@ -83,7 +86,7 @@ func TestPrintRevisionsTable(t *testing.T) {
 			},
 		},
 	}
-	out, err := captureStdout(t, func() error { return printRevisionsTable("dev", "app", revs) })
+	out, err := captureStdout(t, func() error { return printRevisionsTable("dev", "app", revs, false) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,6 +108,38 @@ func TestPrintRevisionsTable(t *testing.T) {
 	if !strings.Contains(out, "- ") {
 		// At least one '-' for the blank health column.
 		t.Errorf("expected '-' fallback for blank health: %s", out)
+	}
+}
+
+func TestPrintRevisionsTable_ColorHighlightsRunningFailedStopped(t *testing.T) {
+	prev := lipgloss.DefaultRenderer().ColorProfile()
+	lipgloss.DefaultRenderer().SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.DefaultRenderer().SetColorProfile(prev) })
+
+	revs := []azurearm.Revision{
+		{Name: "app--running", Properties: azurearm.RevisionProperties{RunningState: "Running"}},
+		{Name: "app--failed", Properties: azurearm.RevisionProperties{RunningState: "Failed"}},
+		{Name: "app--stopped", Properties: azurearm.RevisionProperties{RunningState: "Stopped"}},
+	}
+	colored, err := captureStdout(t, func() error { return printRevisionsTable("dev", "app", revs, true) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(colored, "\x1b[") {
+		t.Errorf("expected ANSI escapes in colored output:\n%s", colored)
+	}
+
+	plain, err := captureStdout(t, func() error { return printRevisionsTable("dev", "app", revs, false) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain, "\x1b[") {
+		t.Errorf("color=false should not emit ANSI escapes:\n%s", plain)
+	}
+	for _, want := range []string{"Running", "Failed", "Stopped"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("plain output missing %q:\n%s", want, plain)
+		}
 	}
 }
 

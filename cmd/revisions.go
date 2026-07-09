@@ -23,6 +23,7 @@ func RevisionsFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.IntFlag{Name: "limit", Usage: "max revisions to list (most recent first)", Value: 10},
 		&cli.StringFlag{Name: "format", Usage: "output format: table|json", Value: "table"},
+		&cli.BoolFlag{Name: "no-color", Usage: "disable ANSI colors (also honored via NO_COLOR env)"},
 	}
 }
 
@@ -34,6 +35,7 @@ func RevisionsFlags() []cli.Flag {
 func Revisions(ctx context.Context, c *cli.Command) error {
 	limit := int(c.Int("limit"))
 	format := c.String("format")
+	color := shouldColor(c.Bool("no-color"))
 
 	t, err := loadAzureTarget(c, "revisions")
 	if err != nil {
@@ -52,7 +54,7 @@ func Revisions(ctx context.Context, c *cli.Command) error {
 
 	switch format {
 	case "", "table":
-		return printRevisionsTable(t.Env, t.Name, revs)
+		return printRevisionsTable(t.Env, t.Name, revs, color)
 	case "json":
 		return printRevisionsJSON(revs)
 	default:
@@ -64,7 +66,7 @@ func Revisions(ctx context.Context, c *cli.Command) error {
 // The revision currently serving traffic is tagged "(latest)" — there
 // may be more than one "active" revision in Multiple mode, so we tag
 // whichever has the highest traffic weight.
-func printRevisionsTable(env, app string, revs []azurearm.Revision) error {
+func printRevisionsTable(env, app string, revs []azurearm.Revision, color bool) error {
 	latestName := findLatest(revs)
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
@@ -88,8 +90,8 @@ func printRevisionsTable(env, app string, revs []azurearm.Revision) error {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\n",
 			display, age, traffic,
 			rev.Properties.Replicas,
-			stringOr(rev.Properties.RunningState, "-"),
-			stringOr(rev.Properties.HealthState, "-"),
+			colorStatus(stringOr(rev.Properties.RunningState, "-"), color),
+			colorStatus(stringOr(rev.Properties.HealthState, "-"), color),
 		)
 	}
 	return tw.Flush()
