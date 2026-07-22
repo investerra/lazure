@@ -23,6 +23,9 @@ func RolloutFlags() []cli.Flag {
 		&cli.BoolFlag{Name: "no-version-wait", Usage: "skip public /version verification after deploy"},
 		&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "skip the confirmation prompt"},
 		&cli.BoolFlag{Name: "dry-run", Usage: "print the rollout plan without changing anything"},
+		&cli.StringSliceFlag{Name: "build-arg", Usage: "with build: extra --build-arg KEY=VAL passed to docker build (repeatable)"},
+		&cli.StringSliceFlag{Name: "secret", Usage: "with build: --secret value passed verbatim to docker build (repeatable)"},
+		&cli.StringSliceFlag{Name: "env", Usage: "temporary plain env var for the deploy step only: KEY=VALUE (repeatable)"},
 	}
 }
 
@@ -40,9 +43,16 @@ func Rollout(ctx context.Context, c *cli.Command) error {
 	noPush := c.Bool("no-push")
 	noSecretSync := c.Bool("no-secret-sync")
 	noVersionWait := c.Bool("no-version-wait")
+	buildArgs := c.StringSlice("build-arg")
+	secrets := c.StringSlice("secret")
+	envOverrides := c.StringSlice("env")
 
 	slog.Debug("rollout: start", "env", env, "dir", dir,
 		"no_build", noBuild, "no_tag", noTag, "no_push", noPush, "no_secret_sync", noSecretSync)
+
+	if noBuild && (len(buildArgs) > 0 || len(secrets) > 0) {
+		slog.Warn("rollout: --build-arg / --secret ignored with --no-build")
+	}
 
 	if out, err := gitRun(ctx, "status", "--porcelain"); err != nil {
 		return errs.System(errs.Wrap(err, "rollout: git status"))
@@ -111,6 +121,8 @@ func Rollout(ctx context.Context, c *cli.Command) error {
 			Vars:       vars,
 			Push:       true,
 			Pull:       true,
+			BuildArgs:  buildArgs,
+			Secrets:    secrets,
 		}); err != nil {
 			return errs.System(errs.Wrap(err, "rollout: build"))
 		}
@@ -142,7 +154,11 @@ func Rollout(ctx context.Context, c *cli.Command) error {
 		}
 	}
 
-	if err := runSelf(ctx, "--dir", dir, "deploy", env, "-y", "--wait", "--logs"); err != nil {
+	deployArgs := []string{"--dir", dir, "deploy", env, "-y", "--wait", "--logs"}
+	for _, e := range envOverrides {
+		deployArgs = append(deployArgs, "--env", e)
+	}
+	if err := runSelf(ctx, deployArgs...); err != nil {
 		return errs.System(errs.Wrap(err, "rollout: deploy"))
 	}
 	if !noVersionWait {
